@@ -11,7 +11,7 @@ sangang_channel.py — 산강채널 계산 모듈
 
 from __future__ import annotations
 
-__version__ = "2.9.4-2026-07-19-ma60-multi-tf-panel"
+__version__ = "2.9.5-2026-07-19-ma60-touch-count"
 
 import pandas as pd
 import numpy as np
@@ -306,12 +306,13 @@ def check_ma60_multi_timeframe(
 ) -> dict:
     """
     15분봉·30분봉·60분봉 각각의 60이평(MA60)을 계산해서, 현재가가
-    각 타임프레임의 60선에 얼마나 근접해 있는지(터치 여부)를 한눈에 보여주는
-    전용 대시보드용 데이터를 만듭니다.
+    각 타임프레임의 60선에 얼마나 근접해 있는지(터치 여부)와
+    과거 몇 번이나 이 선을 건드렸는지(터치 횟수)를 한눈에 보여줍니다.
 
     반환 예:
     {
-        "15분": {"ma60": 1171.2, "price": 1171.5, "diff_pct": 0.03, "touching": True},
+        "15분": {"ma60": 1171.2, "price": 1171.5, "diff_pct": 0.03,
+                  "touching": True, "touch_count": 0, "reliability_label": "1차 터치 ..."},
         "30분": {...},
         "60분": {...},
         "confluence_count": 2,   # 동시에 터치 중인 타임프레임 개수
@@ -324,13 +325,19 @@ def check_ma60_multi_timeframe(
 
     for label, df in frames.items():
         if df is None or df.empty or len(df) < 60:
-            result[label] = {"ma60": None, "price": None, "diff_pct": None, "touching": False}
+            result[label] = {
+                "ma60": None, "price": None, "diff_pct": None,
+                "touching": False, "touch_count": 0, "reliability_label": "",
+            }
             continue
 
         ma60 = float(df["close"].rolling(60).mean().iloc[-1])
         price = float(df["close"].iloc[-1])
         diff_pct = abs(price - ma60) / ma60 * 100 if ma60 else None
         touching = diff_pct is not None and diff_pct <= tolerance_pct
+
+        touch_count = count_prior_touches(df, ma60, tolerance_pct=tolerance_pct)
+        reliability_label = touch_confidence_label(touch_count)
 
         if touching:
             touching_count += 1
@@ -340,6 +347,8 @@ def check_ma60_multi_timeframe(
             "price": price,
             "diff_pct": diff_pct,
             "touching": touching,
+            "touch_count": touch_count,
+            "reliability_label": reliability_label,
         }
 
     result["confluence_count"] = touching_count
