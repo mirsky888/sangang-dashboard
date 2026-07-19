@@ -188,6 +188,7 @@ def fetch_minute_ohlcv(
         "FID_INPUT_ISCD": symbol,          # 예: "A01609"(2026년 9월물), "A01000"(연결선물) — 2026-07-19 사용자 확인
         "FID_HOUR_CLS_CODE": str(interval_min),
         "FID_PW_DATA_INCU_YN": "Y",
+        "FID_FAKE_TICK_INCU_YN": "N",      # 가짜(허봉) 체결 포함 여부 — 2026-07-19 응답 오류로 추가 확인됨
         "FID_INPUT_DATE_1": end_datetime.strftime("%Y%m%d"),
         "FID_INPUT_HOUR_1": end_datetime.strftime("%H%M%S"),
     }
