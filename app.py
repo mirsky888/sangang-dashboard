@@ -166,6 +166,9 @@ if result.reliability_label:
         + (" — 터치/중첩 보정으로 등급이 조정됐습니다." if result.grade_adjusted else "")
     )
 
+if result.extreme_emphasis:
+    st.success(f"### {result.extreme_emphasis}")
+
 st.subheader("항목별 체크리스트")
 detail_df = pd.DataFrame(
     {
