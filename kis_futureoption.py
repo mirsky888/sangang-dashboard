@@ -185,7 +185,7 @@ def fetch_minute_ohlcv(
 
     params = {
         "FID_COND_MRKT_DIV_CODE": "F",     # 선물 구분 (옵션은 별도 코드 필요할 수 있음 — 확인 필요)
-        "FID_INPUT_ISCD": symbol,
+        "FID_INPUT_ISCD": symbol,          # 예: "A01609"(2026년 9월물), "A01000"(연결선물) — 2026-07-19 사용자 확인
         "FID_HOUR_CLS_CODE": str(interval_min),
         "FID_PW_DATA_INCU_YN": "Y",
         "FID_INPUT_DATE_1": end_datetime.strftime("%Y%m%d"),
