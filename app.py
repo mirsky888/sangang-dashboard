@@ -140,12 +140,27 @@ engine.set_key_levels_with_confluence(key_levels, confluence_map)
 
 try:
     prev_high, prev_low, channel_center = compute_prev_day_center(df60)
+    center_is_fallback = False
 except ValueError as e:
-    st.error(
-        f"전일 고점/저점 계산 실패: {e}\n\n"
-        "→ 60분봉 lookback_days를 늘려서 최소 2거래일치 데이터를 확보해 주세요."
+    unique_dates = sorted(set(df60.index.date)) if not df60.empty else []
+    st.warning(
+        f"⚠️ 전일 고점/저점 계산 실패: {e}\n\n"
+        f"→ 현재 조회된 60분봉의 거래일 목록: **{unique_dates}**\n\n"
+        + (
+            "위 목록이 1개뿐이라 진짜 문제입니다 — lookback_days를 늘려도 소용없고, "
+            "KIS API의 과거 날짜 분봉 조회(fetch_ohlcv_chunked)가 실제로 여러 날짜를 "
+            "반환하지 못하고 있는 것으로 보입니다. 점검이 필요합니다."
+            if len(unique_dates) <= 1
+            else "날짜는 여러 개 있는데 판정에 실패했다면 날짜 파싱/정렬 문제일 수 있습니다."
+        )
+        + "\n\n일단 오늘 세션(당일) 고점/저점의 중간값으로 임시 대체하여 계속 진행합니다."
     )
-    st.stop()
+    # 폴백: 전일 데이터를 못 구하면 당일 세션 고점/저점 중간값으로 임시 대체
+    from sangang_channel import compute_structural_channel as _csc
+    _fallback_channel = _csc(df60, anchor="session")
+    prev_high, prev_low = _fallback_channel.high, _fallback_channel.low
+    channel_center = _fallback_channel.center
+    center_is_fallback = True
 
 result = engine.evaluate(df60, df30, df15, df3, channel_center=channel_center)
 
@@ -175,6 +190,7 @@ col3.metric("방향", result.direction or "관망")
 st.caption(
     f"📍 전일 고점: **{prev_high:.2f}**  |  전일 저점: **{prev_low:.2f}**  |  "
     f"중심가(=(전일고점+전일저점)/2): **{channel_center:.2f}**"
+    + (" ⚠️ (전일 데이터 부족으로 당일 세션 기준 임시 대체값)" if center_is_fallback else "")
 )
 
 reliability_label = getattr(result, "reliability_label", "")
