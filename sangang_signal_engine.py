@@ -60,10 +60,14 @@ class SignalResult:
     passed_required: bool               # 필수 4조건 모두 충족 여부
     details: Dict[str, bool] = field(default_factory=dict)   # 항목별 충족 여부
     breakdown: Dict[str, int] = field(default_factory=dict)  # 항목별 획득 점수
+    touch_count: int = 0                # 해당 주요자리를 몇 번째 터치하는지 (0 = 첫 터치)
+    confluence_count: int = 1           # 그 주요자리에 몇 개 지표가 겹쳐있는지 (1 = 단일, 2+ = 중첩)
+    reliability_label: str = ""         # "1차 터치 (약 80% 신뢰도)" 등 정성적 설명
+    grade_adjusted: bool = False        # 터치/중첩 보정으로 등급이 조정됐는지 여부
 
     def __repr__(self):
         d = self.direction or "NONE"
-        return f"<SignalResult {d} score={self.score} grade={self.grade}>"
+        return f"<SignalResult {d} score={self.score} grade={self.grade} touch={self.touch_count} confluence={self.confluence_count}>"
 
 
 @dataclass
@@ -155,6 +159,7 @@ class SangangEngine:
         ema_period_3m: int = 20,
     ):
         self.key_levels = key_levels or []
+        self.confluence_map: dict = {}
         self.tail_ratio_threshold = tail_ratio_threshold
         self.level_tolerance_pct = level_tolerance_pct
         self.volume_lookback_15m = volume_lookback_15m
@@ -164,6 +169,14 @@ class SangangEngine:
     def set_key_levels(self, key_levels: List[float]):
         """산강채널/통곡의 벽 등 상위 로직에서 계산한 주요자리를 갱신할 때 사용."""
         self.key_levels = key_levels
+
+    def set_key_levels_with_confluence(self, key_levels: List[float], confluence_map: dict):
+        """
+        sangang_channel.compute_key_levels_with_confluence()의 결과를 그대로 넣으면
+        각 레벨의 '중첩 개수'까지 함께 반영됩니다 (미호출 시 전부 confluence=1로 취급).
+        """
+        self.key_levels = key_levels
+        self.confluence_map = confluence_map or {}
 
     # ------------------------------------------------------------------
     # 계층 1: 60분봉 방향
@@ -195,16 +208,28 @@ class SangangEngine:
         직전(또는 최신 확정) 30분봉이 주요자리 근처에서
         방향에 맞는 꼬리(아래꼬리=CALL / 윗꼬리=PUT)를 tail_ratio_threshold 이상 만들었는지 확인.
         """
-        row = df30.iloc[-1]
-        level = near_key_level(row["low"] if direction == "CALL" else row["high"],
-                                self.key_levels, self.level_tolerance_pct)
-        if level is None:
+        matched, _ = self.get_matched_level(df30, direction)
+        if matched is None:
             return False
 
+        row = df30.iloc[-1]
         if direction == "CALL":
             return _lower_tail_ratio(row) >= self.tail_ratio_threshold
         else:
             return _upper_tail_ratio(row) >= self.tail_ratio_threshold
+
+    def get_matched_level(self, df30: pd.DataFrame, direction: Direction):
+        """
+        현재 30분봉이 근접해 있는 key_level과 그 confluence(중첩) 개수를 반환.
+        반환: (matched_level: Optional[float], confluence_count: int)
+        """
+        row = df30.iloc[-1]
+        price = row["low"] if direction == "CALL" else row["high"]
+        level = near_key_level(price, self.key_levels, self.level_tolerance_pct)
+        if level is None:
+            return None, 1
+        confluence = self.confluence_map.get(level, 1)
+        return level, confluence
 
     # ------------------------------------------------------------------
     # 계층 3: 15분봉 전환
@@ -319,6 +344,22 @@ class SangangEngine:
         # + 3분봉 계층에서 최소 고가/저가 돌파는 실행 트리거로 필수 취급
         passed_required = d60_ok and tail_ok and rev_ok and s3["break_prior"]
 
+        # ------------------------------------------------------------
+        # 터치 횟수 / 중첩 보정 ("첫 번째가 80%" + "중첩되면 신뢰도 상승" 원칙)
+        # ------------------------------------------------------------
+        from sangang_channel import count_prior_touches, touch_confidence_label
+
+        matched_level, confluence_count = self.get_matched_level(df30, direction)
+        touch_count = 0
+        reliability_label = ""
+        grade_adjusted = False
+
+        if matched_level is not None:
+            touch_count = count_prior_touches(
+                df30, matched_level, tolerance_pct=self.level_tolerance_pct
+            )
+            reliability_label = touch_confidence_label(touch_count)
+
         if not passed_required:
             grade = "관망 (필수조건 미충족)"
             final_direction = None
@@ -331,6 +372,22 @@ class SangangEngine:
                 grade = "B급"
             else:
                 grade = "관망"
+
+            # 등급 보정 규칙:
+            #   - 3차 터치 이상(반복 시도)인데 중첩(2개 이상 지표 겹침)이 아니면 → 한 단계 강등
+            #     ("반복 시도는 저항 약화 가능성" — 단, 중첩이면 그 자체로 신뢰도가 높으므로 봐줌)
+            #   - 1차 터치(최초 도달) + 중첩(2개 이상) → 한 단계 승격 (최대 S급)
+            tiers = ["관망", "B급", "A급", "S급"]
+            if grade in tiers:
+                idx = tiers.index(grade)
+                if touch_count >= 2 and confluence_count < 2:
+                    idx = max(0, idx - 1)
+                    grade_adjusted = True
+                elif touch_count == 0 and confluence_count >= 2:
+                    idx = min(len(tiers) - 1, idx + 1)
+                    grade_adjusted = True
+                grade = tiers[idx]
+
             final_direction = direction if grade != "관망" else None
 
         return SignalResult(
@@ -338,6 +395,10 @@ class SangangEngine:
             score=score,
             grade=grade,
             passed_required=passed_required,
+            touch_count=touch_count,
+            confluence_count=confluence_count,
+            reliability_label=reliability_label,
+            grade_adjusted=grade_adjusted,
             details=details,
             breakdown=breakdown,
         )
