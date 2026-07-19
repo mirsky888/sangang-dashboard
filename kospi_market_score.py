@@ -3,7 +3,7 @@
 kospi_market_score.py — 코스피 시장 분석 6요소 스코어링
 =============================================================
 
-1. 미국시장 확인 (가장 중요)         → ❌ 미구현 (해외지수 API 모듈 없음)
+1. 미국시장 확인 (가장 중요)         → ✅ 구현 완료 (나스닥100 지수, HHDFS00000300 — 선물은 아직 미구현)
 2. 삼전·하닉 방향                    → ✅ 구현 완료 (inquire_price, FHKST01010100)
 3. 외국인 선물 + 현물                → ⚠️ 현물만 구현 (선물 쪽은 국내선물옵션 카테고리 별도 모듈 필요)
 4. 연기금·사모펀드 (기관계로 근사)    → ✅ 구현 완료 (시장별 투자자매매동향, FHPTJ04030000)
@@ -87,13 +87,64 @@ def _bucket_score(value: float, thresholds: list[tuple[float, int]], default: in
 
 
 # ---------------------------------------------------------------------------
-# 1. 미국시장 확인 — 미구현 (해외지수 API 모듈 필요)
+# 1. 미국시장 확인 — ✅ 구현 완료 (나스닥100/다우/S&P500 지수로 대체)
+#    ✅ tr_id/path 확정: 사용자의 overseas_stock_functions.py에서 직접 확인됨
+#    (함수명: price(), v1_해외주식-009 해외주식 현재체결가)
+#    tr_id = "HHDFS00000300"
+#    path  = "/uapi/overseas-price/v1/quotations/price"
+#    params: AUTH="", EXCD="NAS", SYMB="NDX"(나스닥100) / ".DJI"(다우) / "SPX"(S&P500)
+#
+#    참고: 더 공식적인 '지수 전용' API도 확인됨 —
+#    inquire_daily_chartprice() (tr_id FHKST03030100, fid_cond_mrkt_div_code="N")
+#    다우30/나스닥100/S&P500 전용이며 공식 예시가 fid_input_iscd=".DJI"로 명시됨.
+#    지금 쓰는 price() 방식이 부정확하면 이 함수로 교체 권장.
+#
+#    ⚠️ 이건 '나스닥 선물'이 아니라 '나스닥 지수 현재가'입니다. 해외선물(NQ)은
+#    /uapi/overseas-futureoption/ 카테고리로 완전히 별도이며 아직 미구현입니다.
 # ---------------------------------------------------------------------------
-def get_us_market_score(nasdaq_futures_change_pct: Optional[float] = None) -> float:
+def _fetch_index_change_pct(
+    symbol: str,
+    token: KisToken, app_key: str, app_secret: str,
+    excd: str = "NAS",
+    is_paper: bool = False,
+) -> float:
+    """
+    해외지수(또는 해외주식) 현재가 조회 -> 등락률(%) 반환.
+    path: /uapi/overseas-price/v1/quotations/price
+    tr_id: HHDFS00000300 (사용자 overseas_stock_functions.py의 price() 함수와 동일하게 확인됨)
+    """
+    params = {
+        "AUTH": "",
+        "EXCD": excd,
+        "SYMB": symbol,
+    }
+    data = _request_domestic(
+        "/uapi/overseas-price/v1/quotations/price",
+        "HHDFS00000300",
+        token, app_key, app_secret, params, is_paper,
+    )
+    output = data.get("output", {})
+    # _TODO_FIELD_5: 등락률 필드명 확인 필요. 여러 코드 예제에서 'rate' 사용을 확인했으나
+    # overseas_stock_functions.py의 price() docstring에는 응답 필드 상세가 없어 100% 확정은 아님.
+    return float(output.get("rate", 0.0))
+
+
+def get_us_market_score(
+    nasdaq_futures_change_pct: Optional[float] = None,
+    token: Optional[KisToken] = None,
+    app_key: Optional[str] = None,
+    app_secret: Optional[str] = None,
+    is_paper: bool = False,
+    index_symbol: str = "NDX",  # NDX(나스닥100) / .DJI(다우) / SPX(S&P500)
+) -> float:
     if nasdaq_futures_change_pct is None:
-        raise NotImplementedError(
-            "해외지수(나스닥 선물) API 모듈이 아직 없습니다. "
-            "해외주식(overseas_stock) 카테고리 함수 파일을 붙여주시면 연결하겠습니다."
+        if token is None:
+            raise NotImplementedError(
+                "미국시장 등락률이 없습니다. nasdaq_futures_change_pct를 직접 전달하거나 "
+                "token/app_key/app_secret을 넘겨 API를 호출하게 하세요."
+            )
+        nasdaq_futures_change_pct = _fetch_index_change_pct(
+            index_symbol, token, app_key, app_secret, excd="NAS", is_paper=is_paper
         )
     return _bucket_score(
         nasdaq_futures_change_pct,
@@ -362,7 +413,10 @@ def run_kospi_market_analysis(
             missing.append(name)
             errors[name] = f"{type(e).__name__}: {e}"
 
-    _try("us_market", get_us_market_score, nasdaq_futures_change_pct)
+    _try(
+        "us_market", get_us_market_score,
+        nasdaq_futures_change_pct, token, app_key, app_secret, is_paper,
+    )
     _try(
         "semis", get_semis_direction_score,
         samsung_change_pct, skhynix_change_pct, token, app_key, app_secret, is_paper,
