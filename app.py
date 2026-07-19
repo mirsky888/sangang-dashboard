@@ -10,6 +10,10 @@
 레이트리밋 재시도 로직 등)를 그대로 옮겨 붙이시면 완성됩니다.
 지금은 해당 함수들이 더미(dummy) 데이터를 반환하도록 되어 있어
 UI와 산강엔진 연결 구조만 먼저 확인할 수 있습니다.
+
+[2026-07-19 추가] 코스피 마켓스코어 탭 연동:
+    from kospi_market_score_tab import render_kospi_market_tab
+    render_kospi_market_tab(df30, token=token, signal_result=result)
 """
 
 import streamlit as st
@@ -21,6 +25,7 @@ from sangang_signal_engine import SangangEngine, __version__ as ENGINE_VERSION
 from sangang_channel import compute_key_levels_with_confluence, check_ma60_multi_timeframe, __version__ as CHANNEL_VERSION
 from kis_auth import issue_token, KisToken
 from kis_futureoption import fetch_latest_minute_ohlcv, fetch_ohlcv_chunked
+from kospi_market_score_tab import render_kospi_market_tab  # [추가] 코스피 마켓스코어
 
 st.set_page_config(page_title="산강 매매법 v2-9 대시보드", layout="wide")
 
@@ -242,6 +247,11 @@ with st.expander("원본 분봉 데이터 (디버깅용)"):
             "실제 필드명을 알려주시면 kis_futureoption.py의 _parse_ohlcv_output() "
             "매핑을 정확히 고쳐드리겠습니다."
         )
+
+# ----------------------------------------------------------------------
+# [추가] 코스피 시장 분석 — 6요소 종합 스코어링 (2026-07-19)
+# ----------------------------------------------------------------------
+render_kospi_market_tab(df30, token=token, signal_result=result)
 
 st.success(
     "✅ KIS API 실전 연동 확인 완료 (2026-07-19). "
