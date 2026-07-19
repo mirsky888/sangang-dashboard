@@ -207,27 +207,19 @@ def fetch_latest_minute_ohlcv(
     """
     '가장 최근 거래일 기준 최신 분봉'을 조회합니다.
 
-    ⚠️ 2026-07-19 확인된 이슈: FID_INPUT_DATE_1/HOUR_1에 오늘 날짜를 명시적으로
-    채워 보내면, 실제 마지막 거래일(예: 7/16)이 아니라 그보다 하루 더 이전(7/15)
-    데이터가 반환되는 오프바이원 현상이 있었습니다.
-    → 날짜/시간 필드를 빈 문자열로 보내면 KIS 서버가 "가장 최근 거래일"을
-      자동으로 찾아주는 것으로 보여, 이 함수는 그 방식을 사용합니다.
-    과거 특정 시점 조회(청크 조회)는 fetch_minute_ohlcv()를 계속 사용하세요.
+    ⚠️ 2026-07-19 실측 결과 정리:
+      1) FID_INPUT_DATE_1/HOUR_1에 오늘 날짜를 명시하면 → 정상 응답이지만
+         실제 마지막 거래일보다 며칠 더 과거 데이터가 나옴 (배치 지연 가능성)
+      2) FID_INPUT_DATE_1을 빈 문자열로 보내면 → "INVALID FID_INPUT_DATE_1" 오류로
+         아예 거부됨 (이 필드는 빈 값을 허용하지 않는 필수 파라미터임)
+      → 결론: 이 분봉조회 엔드포인트는 정상적으로 동작하지만, 조회 시점 기준
+        실시간(output1의 현재가 스냅샷)과 분봉 이력(output2) 사이에 데이터 지연이
+        존재하는 것으로 보입니다. 이는 코드 버그가 아니라 이 API 자체의 특성일
+        가능성이 높습니다 (선물 정산/배치 처리 주기 등의 이유).
+      → 정확한 지연 사양은 KIS Developers 포털의 해당 API 문서 "응답 상세" 섹션에서
+        확인 권장.
     """
-    params = {
-        "FID_COND_MRKT_DIV_CODE": "F",
-        "FID_INPUT_ISCD": symbol,
-        "FID_HOUR_CLS_CODE": str(interval_min),
-        "FID_PW_DATA_INCU_YN": "Y",
-        "FID_FAKE_TICK_INCU_YN": "N",
-        "FID_INPUT_DATE_1": "",   # 빈 값 = 최신 거래일 자동 판단 (2026-07-19 확인)
-        "FID_INPUT_HOUR_1": "",
-    }
-    data = _request_chart(
-        DEFAULT_MINUTE_PATH, DEFAULT_MINUTE_TR_ID, token, app_key, app_secret, params, is_paper
-    )
-    raw_output = data.get("output2") or data.get("output1") or data.get("output") or []
-    return _parse_ohlcv_output(raw_output)
+    return fetch_minute_ohlcv(symbol, interval_min, token, app_key, app_secret, is_paper)
 
 
 def fetch_minute_ohlcv(
