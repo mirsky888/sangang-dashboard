@@ -2,21 +2,16 @@
 kis_futureoption.py — KIS 국내선물옵션 분봉/일봉 시세 조회
 =============================================================
 
-⚠️ tr_id 확인 필요 안내
-    국내지수선물옵션 분봉조회의 정확한 tr_id/PATH는 KIS Developers 포털 로그인 후에만
-    문서 원문을 볼 수 있어 이번 세션에서 100% 확정 검증은 못했습니다.
-    아래 DEFAULT_MINUTE_TR_ID 값("FHKIF03020200")은 KIS의 국내지수선물옵션 계열
-    TR ID 명명 규칙(FHKIF = 국내지수선물옵션)에 따른 가장 유력한 값입니다.
-    기존에 이미 동작하던 대시보드 코드가 있으시다면, 그 코드의
-    tr_id / PATH 문자열만 아래 상수 두 개에 그대로 옮겨 넣으시면 됩니다.
+⚠️ tr_id / PATH — 2026-07-19 사용자 확인 완료
+    아래 값은 사용자가 KIS Developers 공식 자료에서 직접 확인해 주신 값입니다.
+    DEFAULT_MINUTE_TR_ID = "FHKIF03020200"
+    DEFAULT_MINUTE_PATH  = "/uapi/domestic-futureoption/v1/quotations/inquire-time-fuopchartprice"
+    (이전 버전의 오탈자: "inquire-time-fuopt-chartprice" → 404 오류 원인이었음, 수정 완료)
 
 검증된 부분 (공식 문서/공식 GitHub 예제로 확인):
     - 접근토큰 발급: kis_auth.py 참고
     - 공통 요청 헤더 형식: authorization(Bearer), appkey, appsecret, tr_id, custtype
     - REST 레이트리밋: 초당 20건 (실전투자 기준). 이를 넘기면 EGW00201 등 오류 발생.
-    - 해외선물옵션 분봉조회 API(inquire-time-futurechartprice)의 정확한 구조를 참고하여
-      국내선물옵션 버전의 파라미터 네이밍을 유추해 구성했습니다. 실제 파라미터명이 다르면
-      MINUTE_PATH 아래 params 딕셔너리의 키 이름만 교체하면 됩니다.
 
 이 모듈이 해결하는 v2-8 단계에서 언급된 버그들:
     1. 날짜 정렬 버그  → sort_values(ascending=True)로 항상 시간 오름차순 보장
@@ -37,13 +32,13 @@ import requests
 from kis_auth import KisToken, build_headers, REAL_DOMAIN, PAPER_DOMAIN
 
 # ----------------------------------------------------------------------
-# ⚠️ 확인 필요: 아래 두 값을 기존에 쓰시던 값으로 교체 가능
+# ✅ 확인 완료 (2026-07-19)
 # ----------------------------------------------------------------------
-DEFAULT_MINUTE_PATH = "/uapi/domestic-futureoption/v1/quotations/inquire-time-fuopt-chartprice"
-DEFAULT_MINUTE_TR_ID = "FHKIF03020200"   # 국내지수선물옵션 분봉조회 (추정치 — 확인 필요)
+DEFAULT_MINUTE_PATH = "/uapi/domestic-futureoption/v1/quotations/inquire-time-fuopchartprice"
+DEFAULT_MINUTE_TR_ID = "FHKIF03020200"   # 국내선물옵션 분봉조회
 
 DEFAULT_DAILY_PATH = "/uapi/domestic-futureoption/v1/quotations/inquire-daily-fuopt-chartprice"
-DEFAULT_DAILY_TR_ID = "FHKIF03020100"    # 국내지수선물옵션 일봉조회 (추정치 — 확인 필요)
+DEFAULT_DAILY_TR_ID = "FHKIF03020100"    # 국내지수선물옵션 일봉조회 (여전히 추정치 — 필요시 확인 요망)
 
 MAX_REQUESTS_PER_SEC = 18  # 공식 제한 20건/초 대비 여유분 (18건으로 보수적 운용)
 
