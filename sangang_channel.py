@@ -11,7 +11,7 @@ sangang_channel.py — 산강채널 계산 모듈
 
 from __future__ import annotations
 
-__version__ = "2.9.2-2026-07-19-extreme-emphasis"
+__version__ = "2.9.3-2026-07-19-first-touch-emphasis"
 
 import pandas as pd
 import numpy as np
@@ -253,9 +253,15 @@ def check_channel_extreme_emphasis(
     channel: "ChannelInfo",
     direction: str,
     ma_periods: List[int] = (5, 10, 20, 60, 120),
+    touch_count: Optional[int] = None,
 ) -> Optional[str]:
     """
-    채널 극단(상단/하단) + 이평 배열이 맞아떨어지는 '강조' 자리를 판정합니다.
+    채널 극단(상단/하단) + 이평 배열/60·120선 지지저항이 맞아떨어지는 '강조' 자리를 판정합니다.
+
+    touch_count: 60/120선(또는 매칭된 주요자리) 터치 횟수. 0(첫 터치)일 때만
+    60·120 지지/저항 강조를 발동합니다 — "처음 터치할 때 지지면 매수강조,
+    저항이면 매도강조. 시간이 지나 반복 터치되면 그 신뢰도는 떨어진다"는 원칙 반영.
+    touch_count가 None이면(터치 정보 없이 호출되면) 이 조건 없이 판정합니다.
 
     PUT + 채널상단 근접 + 역배열(하락 저항 정렬) → "채널상단 매도강조"
     CALL + 채널하단 근접 + 정배열 또는 지지 확인 → "채널하단 매수강조"
@@ -275,18 +281,19 @@ def check_channel_extreme_emphasis(
     if direction == "CALL" and near_bottom and alignment == "정배열":
         return "🔺 채널하단 매수강조 — 이평 정배열(상승 지지 정렬) 확인됨"
 
-    # 정배열/역배열까지는 아니어도, 장기 이평(60·120)이 지지/저항으로 작용하는 경우도 강조
-    if len(df) >= max(ma_periods):
+    # 60·120 장기이평 지지/저항 — '처음 터치'일 때만 강조 (touch_count == 0)
+    is_first_touch = touch_count is None or touch_count == 0
+    if len(df) >= max(ma_periods) and is_first_touch:
         ma60 = df["close"].rolling(60).mean().iloc[-1] if len(df) >= 60 else None
         ma120 = df["close"].rolling(120).mean().iloc[-1] if len(df) >= 120 else None
 
         if direction == "CALL" and near_bottom and ma60 is not None:
             if abs(last_close - ma60) / ma60 * 100 <= 0.15 or (ma120 and abs(last_close - ma120) / ma120 * 100 <= 0.15):
-                return "🔺 채널하단 매수강조 — 60·120 장기이평 지지 확인됨"
+                return "🔺 채널하단 매수강조 — 60·120 장기이평 첫 터치 지지 확인됨"
 
         if direction == "PUT" and near_top and ma60 is not None:
             if abs(last_close - ma60) / ma60 * 100 <= 0.15 or (ma120 and abs(last_close - ma120) / ma120 * 100 <= 0.15):
-                return "🔻 채널상단 매도강조 — 60·120 장기이평 저항 확인됨"
+                return "🔻 채널상단 매도강조 — 60·120 장기이평 첫 터치 저항 확인됨"
 
     return None
 
