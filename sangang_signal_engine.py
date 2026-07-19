@@ -64,6 +64,7 @@ class SignalResult:
     confluence_count: int = 1           # 그 주요자리에 몇 개 지표가 겹쳐있는지 (1 = 단일, 2+ = 중첩)
     reliability_label: str = ""         # "1차 터치 (약 80% 신뢰도)" 등 정성적 설명
     grade_adjusted: bool = False        # 터치/중첩 보정으로 등급이 조정됐는지 여부
+    extreme_emphasis: Optional[str] = None  # "채널상단 매도강조" / "채널하단 매수강조" 등
 
     def __repr__(self):
         d = self.direction or "NONE"
@@ -309,11 +310,20 @@ class SangangEngine:
         direction_override를 지정하면 60분봉 자동판정을 무시하고 해당 방향만 검사합니다
         (예: 이미 60분봉 방향이 확정된 상태에서 재평가할 때).
         """
+        from sangang_channel import compute_structural_channel, check_channel_extreme_emphasis
+
         direction = direction_override or self.get_60min_direction(df60)
         last_price = df3["close"].iloc[-1]
 
+        try:
+            channel_info = compute_structural_channel(df3, anchor="session")
+            effective_center = channel_center if channel_center is not None else channel_info.center
+        except Exception:
+            channel_info = None
+            effective_center = channel_center
+
         d60_ok = True  # get_60min_direction 자체가 이미 해당 방향을 반환하므로 항상 충족
-        center_ok = self.check_above_center(last_price, channel_center, direction)
+        center_ok = self.check_above_center(last_price, effective_center, direction)
         tail_ok = self.check_30min_tail(df30, direction)
         rev_ok = self.check_15min_reversal(df15, direction)
         s3 = self.score_3min(df3, direction)
@@ -360,6 +370,10 @@ class SangangEngine:
             )
             reliability_label = touch_confidence_label(touch_count)
 
+        extreme_emphasis = None
+        if channel_info is not None:
+            extreme_emphasis = check_channel_extreme_emphasis(df3, channel_info, direction)
+
         if not passed_required:
             grade = "관망 (필수조건 미충족)"
             final_direction = None
@@ -386,6 +400,9 @@ class SangangEngine:
                 elif touch_count == 0 and confluence_count >= 2:
                     idx = min(len(tiers) - 1, idx + 1)
                     grade_adjusted = True
+                if extreme_emphasis is not None:
+                    idx = min(len(tiers) - 1, idx + 1)
+                    grade_adjusted = True
                 grade = tiers[idx]
 
             final_direction = direction if grade != "관망" else None
@@ -399,6 +416,7 @@ class SangangEngine:
             confluence_count=confluence_count,
             reliability_label=reliability_label,
             grade_adjusted=grade_adjusted,
+            extreme_emphasis=extreme_emphasis,
             details=details,
             breakdown=breakdown,
         )
