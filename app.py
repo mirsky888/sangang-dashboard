@@ -194,6 +194,7 @@ for col, label in zip(panel_cols, tf_labels):
                 delta=f"{icon} (차이 {info['diff_pct']:.2f}%)",
                 delta_color="off",
             )
+            st.caption(f"터치 횟수: **{info['touch_count']}회** — {info['reliability_label']}")
 
 if ma60_panel["all_touching"]:
     st.success("🎯 15·30·60분 60선이 **동시에 전부** 터치 중입니다 — 매우 강한 지지/저항 자리일 가능성이 높습니다.")
