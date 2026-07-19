@@ -18,7 +18,7 @@ import numpy as np
 from datetime import datetime, timedelta
 
 from sangang_signal_engine import SangangEngine, __version__ as ENGINE_VERSION
-from sangang_channel import compute_key_levels_with_confluence, __version__ as CHANNEL_VERSION
+from sangang_channel import compute_key_levels_with_confluence, check_ma60_multi_timeframe, __version__ as CHANNEL_VERSION
 from kis_auth import issue_token, KisToken
 from kis_futureoption import fetch_latest_minute_ohlcv, fetch_ohlcv_chunked
 
@@ -175,6 +175,32 @@ if reliability_label:
 if extreme_emphasis:
     st.success(f"### {extreme_emphasis}")
 
+st.markdown("---")
+st.subheader("📐 15·30·60분 60선 동시터치 패널")
+ma60_panel = check_ma60_multi_timeframe(df15, df30, df60)
+
+panel_cols = st.columns(3)
+tf_labels = ["15분", "30분", "60분"]
+for col, label in zip(panel_cols, tf_labels):
+    info = ma60_panel[label]
+    with col:
+        if info["ma60"] is None:
+            st.metric(f"{label} 60선", "데이터 부족")
+        else:
+            icon = "🟢 터치" if info["touching"] else "⚪ 미터치"
+            st.metric(
+                f"{label} 60선",
+                f"{info['ma60']:.2f}",
+                delta=f"{icon} (차이 {info['diff_pct']:.2f}%)",
+                delta_color="off",
+            )
+
+if ma60_panel["all_touching"]:
+    st.success("🎯 15·30·60분 60선이 **동시에 전부** 터치 중입니다 — 매우 강한 지지/저항 자리일 가능성이 높습니다.")
+elif ma60_panel["confluence_count"] >= 2:
+    st.info(f"ℹ️ {ma60_panel['confluence_count']}개 타임프레임의 60선이 동시에 터치 중입니다 — 신뢰도 높은 자리입니다.")
+
+st.markdown("---")
 st.subheader("항목별 체크리스트")
 detail_df = pd.DataFrame(
     {
