@@ -17,8 +17,8 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 
-from sangang_signal_engine import SangangEngine
-from sangang_channel import compute_key_levels_with_confluence
+from sangang_signal_engine import SangangEngine, __version__ as ENGINE_VERSION
+from sangang_channel import compute_key_levels_with_confluence, __version__ as CHANNEL_VERSION
 from kis_auth import issue_token, KisToken
 from kis_futureoption import fetch_latest_minute_ohlcv, fetch_ohlcv_chunked
 
@@ -58,6 +58,7 @@ def fetch_ohlcv(symbol: str, interval_min: int, lookback_days: int = 3) -> pd.Da
 # 사이드바 — 종목/파라미터 설정
 # ----------------------------------------------------------------------
 st.sidebar.title("⚙️ 설정")
+st.sidebar.caption(f"engine: {ENGINE_VERSION} | channel: {CHANNEL_VERSION}")
 
 symbol = st.sidebar.text_input(
     "종목/선물코드 (KRX 단축코드)",
@@ -158,16 +159,21 @@ col1.metric("신뢰도 점수", f"{result.score} / 100")
 col2.metric("등급", result.grade)
 col3.metric("방향", result.direction or "관망")
 
-if result.reliability_label:
-    badge = "🔁" if result.grade_adjusted else "ℹ️"
+reliability_label = getattr(result, "reliability_label", "")
+confluence_count = getattr(result, "confluence_count", 1)
+grade_adjusted = getattr(result, "grade_adjusted", False)
+extreme_emphasis = getattr(result, "extreme_emphasis", None)
+
+if reliability_label:
+    badge = "🔁" if grade_adjusted else "ℹ️"
     st.caption(
-        f"{badge} 주요자리 터치 정보: **{result.reliability_label}** "
-        f"(중첩 지표 {result.confluence_count}개)"
-        + (" — 터치/중첩 보정으로 등급이 조정됐습니다." if result.grade_adjusted else "")
+        f"{badge} 주요자리 터치 정보: **{reliability_label}** "
+        f"(중첩 지표 {confluence_count}개)"
+        + (" — 터치/중첩 보정으로 등급이 조정됐습니다." if grade_adjusted else "")
     )
 
-if result.extreme_emphasis:
-    st.success(f"### {result.extreme_emphasis}")
+if extreme_emphasis:
+    st.success(f"### {extreme_emphasis}")
 
 st.subheader("항목별 체크리스트")
 detail_df = pd.DataFrame(
