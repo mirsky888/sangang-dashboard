@@ -7,6 +7,17 @@ app.py 맨 아래(원본 분봉 데이터 expander 다음, 마지막 st.success 
     render_kospi_market_tab(df30, token=token, signal_result=result)
 
 token은 app.py에 이미 있는 get_kis_token()의 반환값을 그대로 재사용합니다.
+
+[2026-07-20 추가] 시세 전용 실전 앱키 지원
+    1번(미국시장)/2번(삼전·하닉)은 모의투자 앱키로는 호출이 막히는 TR입니다
+    (EGW02004: 실전투자 도메인은 모의투자 앱키로 호출 불가).
+    Streamlit Secrets에 아래 두 값을 추가하면, 이 두 항목만 자동으로
+    실전투자 전용 앱키로 우회 호출합니다 (나머지 3,4,5,6번은 기존 모의투자 키 그대로 사용):
+
+        KIS_REAL_APP_KEY = "..."
+        KIS_REAL_APP_SECRET = "..."
+
+    추가하지 않으면 기존과 동일하게 동작합니다 (1,2번은 계속 실패할 수 있음).
 """
 
 import streamlit as st
@@ -30,6 +41,13 @@ VERDICT_COLOR = {
 }
 
 
+@st.cache_resource(show_spinner=False)
+def _get_quote_token(app_key: str, app_secret: str):
+    """시세 전용 실전투자 앱키로 별도 토큰 발급 (모의투자 토큰과 별개로 캐싱)."""
+    from kis_auth import issue_token
+    return issue_token(app_key, app_secret, is_paper=False)
+
+
 def render_kospi_market_tab(price_df, token=None, signal_result=None):
     st.markdown("---")
     st.subheader("📊 코스피 시장 분석 — 6요소 종합 스코어링")
@@ -38,12 +56,28 @@ def render_kospi_market_tab(price_df, token=None, signal_result=None):
     app_secret = st.secrets["KIS_APP_SECRET"] if token is not None else None
     is_paper = st.secrets.get("KIS_IS_PAPER", False) if token is not None else False
 
+    # 시세 전용(1,2번) 실전 앱키 — secrets에 있으면 별도 토큰 발급해서 사용
+    quote_token = quote_app_key = quote_app_secret = None
+    if "KIS_REAL_APP_KEY" in st.secrets and "KIS_REAL_APP_SECRET" in st.secrets:
+        quote_app_key = st.secrets["KIS_REAL_APP_KEY"]
+        quote_app_secret = st.secrets["KIS_REAL_APP_SECRET"]
+        try:
+            quote_token = _get_quote_token(quote_app_key, quote_app_secret)
+        except Exception as e:
+            st.warning(
+                f"⚠️ 시세 전용 실전 앱키(KIS_REAL_APP_KEY) 토큰 발급 실패: {e}\n\n"
+                "1, 2번 항목은 기존 모의투자 키로 폴백해서 시도하며, 계속 실패할 수 있습니다."
+            )
+
     result = run_kospi_market_analysis(
         price_df=price_df,
         token=token,
         app_key=app_key,
         app_secret=app_secret,
         is_paper=is_paper,
+        quote_token=quote_token,
+        quote_app_key=quote_app_key,
+        quote_app_secret=quote_app_secret,
     )
 
     icon = VERDICT_COLOR.get(result.verdict, "⚪")
