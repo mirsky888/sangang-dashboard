@@ -11,7 +11,7 @@ sangang_channel.py — 산강채널 계산 모듈
 
 from __future__ import annotations
 
-__version__ = "2.9.5-2026-07-19-ma60-touch-count"
+__version__ = "2.9.6-2026-07-19-session-only-touch"
 
 import pandas as pd
 import numpy as np
@@ -336,7 +336,13 @@ def check_ma60_multi_timeframe(
         diff_pct = abs(price - ma60) / ma60 * 100 if ma60 else None
         touching = diff_pct is not None and diff_pct <= tolerance_pct
 
-        touch_count = count_prior_touches(df, ma60, tolerance_pct=tolerance_pct)
+        # 터치 횟수는 '당일(오늘 세션)' 데이터만으로 계산
+        # (MA60 값 자체는 과거 데이터를 포함한 전체 df로 계산 — 이평선 정확도 유지)
+        last_date = df.index[-1].date()
+        session_df = df[df.index.date == last_date]
+        touch_count = count_prior_touches(
+            session_df, ma60, tolerance_pct=tolerance_pct, lookback_bars=len(session_df)
+        )
         reliability_label = touch_confidence_label(touch_count)
 
         if touching:
