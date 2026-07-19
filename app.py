@@ -18,7 +18,7 @@ import numpy as np
 from datetime import datetime, timedelta
 
 from sangang_signal_engine import SangangEngine
-from sangang_channel import compute_key_levels
+from sangang_channel import compute_key_levels_with_confluence
 from kis_auth import issue_token, KisToken
 from kis_futureoption import fetch_latest_minute_ohlcv, fetch_ohlcv_chunked
 
@@ -121,15 +121,16 @@ if df3.empty:
     st.stop()
 
 # ----------------------------------------------------------------------
-# 주요자리(key_levels) 산출 — 산강채널 + 다중이평 + 통곡의 벽 종합
+# 주요자리(key_levels) 산출 — 산강채널 + 다중이평 + 통곡의 벽 + 중첩(confluence) 종합
 # ----------------------------------------------------------------------
-key_levels = compute_key_levels(df60, df30, df15)
+key_levels, confluence_map = compute_key_levels_with_confluence(df60, df30, df15)
 
 engine = SangangEngine(
     key_levels=key_levels,
     tail_ratio_threshold=tail_ratio_threshold,
     level_tolerance_pct=level_tolerance_pct,
 )
+engine.set_key_levels_with_confluence(key_levels, confluence_map)
 
 channel_center = float(df3["close"].tail(60).mean())
 result = engine.evaluate(df60, df30, df15, df3, channel_center=channel_center)
@@ -156,6 +157,14 @@ col1, col2, col3 = st.columns(3)
 col1.metric("신뢰도 점수", f"{result.score} / 100")
 col2.metric("등급", result.grade)
 col3.metric("방향", result.direction or "관망")
+
+if result.reliability_label:
+    badge = "🔁" if result.grade_adjusted else "ℹ️"
+    st.caption(
+        f"{badge} 주요자리 터치 정보: **{result.reliability_label}** "
+        f"(중첩 지표 {result.confluence_count}개)"
+        + (" — 터치/중첩 보정으로 등급이 조정됐습니다." if result.grade_adjusted else "")
+    )
 
 st.subheader("항목별 체크리스트")
 detail_df = pd.DataFrame(
