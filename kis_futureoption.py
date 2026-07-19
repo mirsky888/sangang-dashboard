@@ -168,6 +168,34 @@ def _parse_ohlcv_output(raw_output: List[dict]) -> pd.DataFrame:
     return df
 
 
+def fetch_minute_ohlcv_raw(
+    symbol: str,
+    interval_min: int,
+    token: KisToken,
+    app_key: str,
+    app_secret: str,
+    is_paper: bool = False,
+    end_datetime: Optional[datetime] = None,
+) -> dict:
+    """
+    디버깅 전용: 파싱하지 않은 KIS 원본 JSON 응답을 그대로 반환합니다.
+    실제 필드명(가격/날짜/시간 필드가 무엇인지)을 확인할 때 사용하세요.
+    """
+    end_datetime = end_datetime or datetime.now()
+    params = {
+        "FID_COND_MRKT_DIV_CODE": "F",
+        "FID_INPUT_ISCD": symbol,
+        "FID_HOUR_CLS_CODE": str(interval_min),
+        "FID_PW_DATA_INCU_YN": "Y",
+        "FID_FAKE_TICK_INCU_YN": "N",
+        "FID_INPUT_DATE_1": end_datetime.strftime("%Y%m%d"),
+        "FID_INPUT_HOUR_1": end_datetime.strftime("%H%M%S"),
+    }
+    return _request_chart(
+        DEFAULT_MINUTE_PATH, DEFAULT_MINUTE_TR_ID, token, app_key, app_secret, params, is_paper
+    )
+
+
 def fetch_minute_ohlcv(
     symbol: str,
     interval_min: int,
