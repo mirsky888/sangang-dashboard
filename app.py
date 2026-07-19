@@ -144,11 +144,12 @@ st.caption(
     f"현재가: {df3['close'].iloc[-1]:.2f}  |  "
     f"⏱️ 실제 데이터 최종 시각: **{df3.index[-1]}**"
 )
-if (datetime.now() - df3.index[-1].to_pydatetime()).total_seconds() > 3600:
+if (datetime.now() - df3.index[-1].to_pydatetime()).total_seconds() > 86400:
     st.warning(
-        f"⚠️ 데이터의 최종 시각({df3.index[-1]})이 현재 시각보다 1시간 이상 오래됐습니다. "
-        "장 시간이 아니거나(휴장), API 파라미터 해석 문제로 과거 데이터를 받아왔을 수 있습니다. "
-        "아래 '원본 분봉 데이터' 섹션에서 raw 응답을 확인해 보세요."
+        f"⚠️ 데이터의 최종 시각({df3.index[-1]})이 현재 시각보다 24시간 이상 오래됐습니다. "
+        "주말/휴장일이거나, 이 API 특성상 분봉 이력에 며칠 지연이 있을 수 있습니다 "
+        "(2026-07-19 실측: 실시간 스냅샷과 분봉 이력 사이에 지연 확인됨 — 버그 아닐 가능성 높음). "
+        "정확한 지연 사양은 KIS Developers 포털에서 확인 권장합니다."
     )
 
 col1, col2, col3 = st.columns(3)
