@@ -108,6 +108,106 @@ def compute_tonggok_byeok(
     return None
 
 
+def count_prior_touches(
+    df: pd.DataFrame,
+    level: float,
+    tolerance_pct: float = 0.15,
+    lookback_bars: int = 500,
+    exclude_last_n: int = 1,
+) -> int:
+    """
+    현재 시점 이전에 이 레벨(지지/저항) 근처에 몇 번이나 '방문'했는지 계산합니다.
+    '첫 번째 지지·저항이 80%' 원칙을 위한 터치 횟수 카운터.
+
+    연속된 봉이 계속 레벨 근처에 머무는 것은 '한 번의 방문'으로 묶어서 셉니다
+    (그렇지 않으면 박스권에서 터치 횟수가 봉 개수만큼 폭증하므로).
+
+    exclude_last_n: 가장 최근 N개 봉은 '지금 막 도달한 현재의 터치'이므로
+    터치 횟수 계산에서 제외합니다 (과거 터치만 셈).
+    """
+    if df.empty or level == 0:
+        return 0
+
+    recent = df.tail(lookback_bars)
+    if exclude_last_n > 0 and len(recent) > exclude_last_n:
+        recent = recent.iloc[:-exclude_last_n]
+
+    near_mask = (
+        (abs(recent["high"] - level) / abs(level) * 100 <= tolerance_pct)
+        | (abs(recent["low"] - level) / abs(level) * 100 <= tolerance_pct)
+    )
+
+    # 연속된 True 구간을 하나의 '방문'으로 묶어서 카운트
+    visits = 0
+    prev = False
+    for v in near_mask:
+        if v and not prev:
+            visits += 1
+        prev = v
+
+    return visits
+
+
+def touch_confidence_label(touch_count: int) -> str:
+    """
+    터치 횟수를 산강의 '첫 번째가 80%' 원칙에 따른 신뢰도 라벨로 변환.
+    실측 승률 데이터가 아니라 원칙을 정성적으로 반영한 근사치입니다.
+    """
+    if touch_count == 0:
+        return "1차 터치 (최초 도달, 약 80% 신뢰도)"
+    elif touch_count == 1:
+        return "2차 터치 (신뢰도 보통)"
+    elif touch_count == 2:
+        return "3차 터치 (신뢰도 하락)"
+    else:
+        return f"{touch_count + 1}차 터치 이상 (반복 시도 — 저항 약화 가능성, 돌파 시나리오도 함께 고려)"
+
+
+def compute_key_levels_with_confluence(
+    df60: pd.DataFrame,
+    df30: pd.DataFrame,
+    df15: Optional[pd.DataFrame] = None,
+    ma_periods: List[int] = (15, 30, 60, 90, 120),
+    confluence_tolerance_pct: float = 0.05,
+) -> tuple:
+    """
+    compute_key_levels()와 같은 로직이되, 각 최종 레벨이 몇 개의 원본 지표
+    (채널 상/하단/중심, 각 MA, 통곡의 벽)에서 비롯됐는지(= 중첩 개수)도 함께 반환합니다.
+
+    반환: (levels: List[float], confluence: Dict[float, int])
+        confluence[level] = 그 레벨 근방에 겹친 원본 지표 개수 (2 이상이면 '중첩' 레벨)
+    """
+    channel = compute_structural_channel(df30, anchor="session")
+    raw_levels = [channel.high, channel.low, channel.center, channel.q25, channel.q75]
+
+    ma60_levels = compute_ma_levels(df60, periods=ma_periods)
+    raw_levels.extend(ma60_levels.values())
+
+    if df15 is not None and not df15.empty:
+        ma15_levels = compute_ma_levels(df15, periods=ma_periods)
+        raw_levels.extend(ma15_levels.values())
+
+    tonggok = compute_tonggok_byeok(df60)
+    if tonggok is not None:
+        raw_levels.append(tonggok)
+
+    raw_levels = sorted(
+        round(lv, 2) for lv in raw_levels if lv is not None and not np.isnan(lv)
+    )
+
+    # 근접한 원본 레벨들을 하나의 최종 레벨로 병합하면서, 몇 개가 뭉쳤는지(중첩 개수) 기록
+    merged: List[float] = []
+    confluence: dict = {}
+    for lv in raw_levels:
+        if merged and abs(lv - merged[-1]) / max(abs(merged[-1]), 1e-9) * 100 <= confluence_tolerance_pct:
+            confluence[merged[-1]] += 1
+        else:
+            merged.append(lv)
+            confluence[lv] = 1
+
+    return merged, confluence
+
+
 def compute_key_levels(
     df60: pd.DataFrame,
     df30: pd.DataFrame,
