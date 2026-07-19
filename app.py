@@ -22,7 +22,7 @@ import numpy as np
 from datetime import datetime, timedelta
 
 from sangang_signal_engine import SangangEngine, __version__ as ENGINE_VERSION
-from sangang_channel import compute_key_levels_with_confluence, check_ma60_multi_timeframe, __version__ as CHANNEL_VERSION
+from sangang_channel import compute_key_levels_with_confluence, check_ma60_multi_timeframe, compute_prev_day_center, __version__ as CHANNEL_VERSION
 from kis_auth import issue_token, KisToken
 from kis_futureoption import fetch_latest_minute_ohlcv, fetch_ohlcv_chunked
 from kospi_market_score_tab import render_kospi_market_tab  # [추가] 코스피 마켓스코어
@@ -138,7 +138,15 @@ engine = SangangEngine(
 )
 engine.set_key_levels_with_confluence(key_levels, confluence_map)
 
-channel_center = float(df3["close"].tail(60).mean())
+try:
+    prev_high, prev_low, channel_center = compute_prev_day_center(df60)
+except ValueError as e:
+    st.error(
+        f"전일 고점/저점 계산 실패: {e}\n\n"
+        "→ 60분봉 lookback_days를 늘려서 최소 2거래일치 데이터를 확보해 주세요."
+    )
+    st.stop()
+
 result = engine.evaluate(df60, df30, df15, df3, channel_center=channel_center)
 
 
@@ -163,6 +171,11 @@ col1, col2, col3 = st.columns(3)
 col1.metric("신뢰도 점수", f"{result.score} / 100")
 col2.metric("등급", result.grade)
 col3.metric("방향", result.direction or "관망")
+
+st.caption(
+    f"📍 전일 고점: **{prev_high:.2f}**  |  전일 저점: **{prev_low:.2f}**  |  "
+    f"중심가(=(전일고점+전일저점)/2): **{channel_center:.2f}**"
+)
 
 reliability_label = getattr(result, "reliability_label", "")
 confluence_count = getattr(result, "confluence_count", 1)
