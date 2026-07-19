@@ -208,6 +208,87 @@ def compute_key_levels_with_confluence(
     return merged, confluence
 
 
+def ma_alignment_state(
+    df: pd.DataFrame,
+    periods: List[int] = (5, 10, 20, 60, 120),
+    slope_lookback: int = 5,
+) -> str:
+    """
+    이평선 배열 상태를 판정합니다 (예시 화면처럼 5/10/20/60/120 이평 기준).
+    - '역배열': 짧은 이평이 긴 이평보다 아래(하락 정렬)이고, 각 이평이 하락 중
+      → 위로 반등해도 각 이평선에서 차례로 저항 받는 하락장 패턴
+    - '정배열': 짧은 이평이 긴 이평보다 위(상승 정렬)이고, 각 이평이 상승 중
+      → 아래로 눌려도 각 이평선에서 차례로 지지 받는 상승장 패턴
+    - '혼조': 위 두 조건에 해당하지 않음
+    """
+    if len(df) < max(periods) + slope_lookback:
+        return "혼조"
+
+    mas = {}
+    slopes = {}
+    for p in periods:
+        series = df["close"].rolling(p).mean()
+        mas[p] = series.iloc[-1]
+        slopes[p] = series.iloc[-1] - series.iloc[-1 - slope_lookback]
+
+    sorted_periods = sorted(periods)
+    values = [mas[p] for p in sorted_periods]
+
+    is_descending_stack = all(values[i] >= values[i + 1] for i in range(len(values) - 1))
+    is_ascending_stack = all(values[i] <= values[i + 1] for i in range(len(values) - 1))
+    all_falling = all(slopes[p] < 0 for p in periods)
+    all_rising = all(slopes[p] > 0 for p in periods)
+
+    if is_descending_stack and all_falling:
+        return "역배열"
+    if is_ascending_stack and all_rising:
+        return "정배열"
+    return "혼조"
+
+
+def check_channel_extreme_emphasis(
+    df: pd.DataFrame,
+    channel: "ChannelInfo",
+    direction: str,
+    ma_periods: List[int] = (5, 10, 20, 60, 120),
+) -> Optional[str]:
+    """
+    채널 극단(상단/하단) + 이평 배열이 맞아떨어지는 '강조' 자리를 판정합니다.
+
+    PUT + 채널상단 근접 + 역배열(하락 저항 정렬) → "채널상단 매도강조"
+    CALL + 채널하단 근접 + 정배열 또는 지지 확인 → "채널하단 매수강조"
+    해당 없으면 None.
+    """
+    if df.empty:
+        return None
+
+    last_close = float(df["close"].iloc[-1])
+    alignment = ma_alignment_state(df, periods=ma_periods)
+
+    near_top = last_close >= channel.q75
+    near_bottom = last_close <= channel.q25
+
+    if direction == "PUT" and near_top and alignment == "역배열":
+        return "🔻 채널상단 매도강조 — 이평 역배열(하락 저항 정렬) 확인됨"
+    if direction == "CALL" and near_bottom and alignment == "정배열":
+        return "🔺 채널하단 매수강조 — 이평 정배열(상승 지지 정렬) 확인됨"
+
+    # 정배열/역배열까지는 아니어도, 장기 이평(60·120)이 지지/저항으로 작용하는 경우도 강조
+    if len(df) >= max(ma_periods):
+        ma60 = df["close"].rolling(60).mean().iloc[-1] if len(df) >= 60 else None
+        ma120 = df["close"].rolling(120).mean().iloc[-1] if len(df) >= 120 else None
+
+        if direction == "CALL" and near_bottom and ma60 is not None:
+            if abs(last_close - ma60) / ma60 * 100 <= 0.15 or (ma120 and abs(last_close - ma120) / ma120 * 100 <= 0.15):
+                return "🔺 채널하단 매수강조 — 60·120 장기이평 지지 확인됨"
+
+        if direction == "PUT" and near_top and ma60 is not None:
+            if abs(last_close - ma60) / ma60 * 100 <= 0.15 or (ma120 and abs(last_close - ma120) / ma120 * 100 <= 0.15):
+                return "🔻 채널상단 매도강조 — 60·120 장기이평 저항 확인됨"
+
+    return None
+
+
 def compute_key_levels(
     df60: pd.DataFrame,
     df30: pd.DataFrame,
