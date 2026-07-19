@@ -313,6 +313,7 @@ WEIGHTS = {
 class MarketAnalysisResult:
     scores: dict = field(default_factory=dict)
     missing_items: List[str] = field(default_factory=list)
+    errors: dict = field(default_factory=dict)  # {항목명: "에러 메시지"} — 미구현이 아니라 호출 실패한 경우
     final_score: Optional[float] = None
     verdict: str = "데이터 부족"
 
@@ -348,12 +349,18 @@ def run_kospi_market_analysis(
     """
     scores = {}
     missing = []
+    errors = {}
 
     def _try(name, fn, *args, **kwargs):
         try:
             scores[name] = fn(*args, **kwargs)
         except NotImplementedError:
             missing.append(name)
+        except Exception as e:
+            # API 호출 자체가 실패한 경우 (tr_id 오류, 계좌 권한, 네트워크 등).
+            # 여기서 앱이 죽지 않도록 반드시 잡아서 '에러' 항목으로 기록한다.
+            missing.append(name)
+            errors[name] = f"{type(e).__name__}: {e}"
 
     _try("us_market", get_us_market_score, nasdaq_futures_change_pct)
     _try(
@@ -375,7 +382,9 @@ def run_kospi_market_analysis(
     _try("price_chart", get_price_chart_score, price_df)
 
     if not scores:
-        return MarketAnalysisResult(scores={}, missing_items=missing, final_score=None, verdict="데이터 부족")
+        return MarketAnalysisResult(
+            scores={}, missing_items=missing, errors=errors, final_score=None, verdict="데이터 부족"
+        )
 
     active_weight_sum = sum(WEIGHTS[k] for k in scores)
     final_score = sum(scores[k] * WEIGHTS[k] for k in scores) / active_weight_sum
@@ -384,6 +393,7 @@ def run_kospi_market_analysis(
     return MarketAnalysisResult(
         scores=scores,
         missing_items=missing,
+        errors=errors,
         final_score=final_score,
         verdict=_classify(final_score),
     )
