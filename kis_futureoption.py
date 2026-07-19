@@ -196,6 +196,40 @@ def fetch_minute_ohlcv_raw(
     )
 
 
+def fetch_latest_minute_ohlcv(
+    symbol: str,
+    interval_min: int,
+    token: KisToken,
+    app_key: str,
+    app_secret: str,
+    is_paper: bool = False,
+) -> pd.DataFrame:
+    """
+    '가장 최근 거래일 기준 최신 분봉'을 조회합니다.
+
+    ⚠️ 2026-07-19 확인된 이슈: FID_INPUT_DATE_1/HOUR_1에 오늘 날짜를 명시적으로
+    채워 보내면, 실제 마지막 거래일(예: 7/16)이 아니라 그보다 하루 더 이전(7/15)
+    데이터가 반환되는 오프바이원 현상이 있었습니다.
+    → 날짜/시간 필드를 빈 문자열로 보내면 KIS 서버가 "가장 최근 거래일"을
+      자동으로 찾아주는 것으로 보여, 이 함수는 그 방식을 사용합니다.
+    과거 특정 시점 조회(청크 조회)는 fetch_minute_ohlcv()를 계속 사용하세요.
+    """
+    params = {
+        "FID_COND_MRKT_DIV_CODE": "F",
+        "FID_INPUT_ISCD": symbol,
+        "FID_HOUR_CLS_CODE": str(interval_min),
+        "FID_PW_DATA_INCU_YN": "Y",
+        "FID_FAKE_TICK_INCU_YN": "N",
+        "FID_INPUT_DATE_1": "",   # 빈 값 = 최신 거래일 자동 판단 (2026-07-19 확인)
+        "FID_INPUT_HOUR_1": "",
+    }
+    data = _request_chart(
+        DEFAULT_MINUTE_PATH, DEFAULT_MINUTE_TR_ID, token, app_key, app_secret, params, is_paper
+    )
+    raw_output = data.get("output2") or data.get("output1") or data.get("output") or []
+    return _parse_ohlcv_output(raw_output)
+
+
 def fetch_minute_ohlcv(
     symbol: str,
     interval_min: int,
@@ -241,14 +275,22 @@ def fetch_ohlcv_chunked(
     """
     lookback_days가 한 번의 API 호출로 못 가져올 만큼 길 때,
     chunk_days 단위로 기간을 쪼개서 반복 호출 후 병합합니다.
-    (KIS 분봉 API는 1회 호출당 반환 건수 제한이 있어, 과거로 갈수록
-     end_datetime을 앞으로 당겨가며 순차 조회하는 방식입니다.)
+
+    최신 구간은 fetch_latest_minute_ohlcv()(날짜 필드 공란 방식)로 가져오고,
+    그보다 과거 구간은 fetch_minute_ohlcv()(명시적 날짜 지정)로 역순 조회합니다.
     """
     all_chunks = []
-    now = datetime.now()
-    cursor_end = now
 
-    remaining_days = lookback_days
+    # 1) 가장 최근 구간은 '공란' 방식으로 조회 (오프바이원 문제 회피)
+    latest_chunk = fetch_latest_minute_ohlcv(symbol, interval_min, token, app_key, app_secret, is_paper)
+    if latest_chunk.empty:
+        return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+
+    all_chunks.append(latest_chunk)
+    cursor_end = latest_chunk.index.min() - timedelta(minutes=interval_min)
+
+    # 2) 그보다 과거 구간은 명시적 날짜로 역순 조회
+    remaining_days = lookback_days - chunk_days
     while remaining_days > 0:
         step = min(chunk_days, remaining_days)
         df_chunk = fetch_minute_ohlcv(
@@ -258,13 +300,8 @@ def fetch_ohlcv_chunked(
             all_chunks.append(df_chunk)
             cursor_end = df_chunk.index.min() - timedelta(minutes=interval_min)
         else:
-            # 더 이상 데이터가 없으면 중단
             break
-
         remaining_days -= step
-
-    if not all_chunks:
-        return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
 
     merged = pd.concat(all_chunks)
     merged = merged[~merged.index.duplicated(keep="last")]
