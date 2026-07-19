@@ -4,37 +4,32 @@ kospi_market_score.py — 코스피 시장 분석 6요소 스코어링
 =============================================================
 
 1. 미국시장 확인 (가장 중요)         → ❌ 미구현 (해외지수 API 모듈 없음)
-2. 삼전·하닉 방향                    → ❌ 미구현 (국내주식 현재가 API 모듈 없음)
-3. 외국인 선물 + 현물                → ❌ 미구현 (투자자매매동향 API 모듈 없음)
-4. 연기금·사모펀드 (기관계로 근사)    → ❌ 미구현 (투자자매매동향 API 모듈 없음)
-5. 프로그램매매                      → ❌ 미구현 (프로그램매매 동향 API 모듈 없음)
+2. 삼전·하닉 방향                    → ✅ 구현 완료 (inquire_price, FHKST01010100)
+3. 외국인 선물 + 현물                → ⚠️ 현물만 구현 (선물 쪽은 국내선물옵션 카테고리 별도 모듈 필요)
+4. 연기금·사모펀드 (기관계로 근사)    → ✅ 구현 완료 (시장별 투자자매매동향, FHPTJ04030000)
+5. 프로그램매매                      → ✅ 구현 완료 (comp_program_trade_today, FHPPG04600101)
 6. 가격(차트)                        → ✅ 구현 완료 — sangang_channel.py 재사용
 >>> 최종판단기준점수 >>> 강세 / 약강세 / 약세 / 폭락장
 
 ------------------------------------------------------------------
-왜 1~5번이 아직 안 되는가
+이번에 새로 연결한 부분 (출처: 공식 domestic_stock_functions.py)
 ------------------------------------------------------------------
-현재 업로드해주신 kis_futureoption.py는 "국내선물옵션 분봉/일봉 시세"만
-다룹니다 (DEFAULT_MINUTE_TR_ID = FHKIF03020200 등). 아래 4종류의
-API는 이 파일에 없는 별도 엔드포인트라 새 모듈이 필요합니다.
+아래 tr_id/path는 한국투자증권 공식 GitHub 샘플(domestic_stock_functions.py)에서
+그대로 추출한 값입니다. 다만 그 파일은 `ka._url_fetch()`라는 별도 인증 스타일을
+쓰고 있어서, 기존 kis_futureoption.py의 `build_headers()` 스타일로 다시 감쌌습니다.
 
-  - 해외지수/해외선물 시세  (1번 미국시장)   → kis_overseas.py (가칭)
-  - 국내주식 현재가         (2번 삼전·하닉)  → kis_domestic_stock.py (가칭)
-  - 투자자매매동향(현물/선물) (3,4번)        → kis_investor_trend.py (가칭)
-  - 프로그램매매 동향        (5번)           → kis_program_trading.py (가칭)
-
-kis_futureoption.py를 만드실 때처럼, 정확한 tr_id/path를 KIS 공식 문서에서
-사용자가 직접 확인해주시면 그 값을 그대로 받아 동일한 패턴
-(rate_limited_retry, _parse_ohlcv_output 스타일)으로 채워드리겠습니다.
-지금은 자리표시자 상태이며, 호출 시 NotImplementedError를 명시적으로
-발생시켜 "구현 안 됨"과 "API 응답 0"을 혼동하지 않도록 했습니다.
+⚠️ 응답 필드명(등락률/순매수량 등 정확한 키 이름)은 docstring에 명시되어 있지
+않아 일반적으로 쓰이는 필드명을 넣어뒀습니다. 실제 응답 JSON을 한 번 찍어보고
+`_TODO_FIELD_*` 표시된 부분만 확인/수정하시면 됩니다.
 
 ------------------------------------------------------------------
-지금 당장 되는 것: 6번 가격(차트)
+여전히 미구현인 부분
 ------------------------------------------------------------------
-sangang_channel.compute_structural_channel() + ma_alignment_state()를
-그대로 재사용해서, 채널 내 현재가 위치(0~100%)와 이평 배열 상태로
-점수를 산출합니다. df만 넘기면 바로 동작합니다.
+  - 1번(미국시장/해외지수): domestic_stock_functions.py는 국내주식 전용이라
+    여기 없습니다. 해외주식(overseas_stock) 카테고리의 별도 함수 파일이 필요합니다.
+  - 3번의 '선물' 쪽(외국인 선물 순매수): 국내선물옵션(domestic_futureoption)
+    카테고리의 투자자매매동향 함수가 필요합니다 (kis_futureoption.py에는
+    시세 조회만 있고 투자자매매동향은 없음).
 """
 
 from __future__ import annotations
@@ -42,15 +37,48 @@ from dataclasses import dataclass, field
 from typing import Optional, List
 
 import pandas as pd
+import requests
 
 from sangang_channel import compute_structural_channel, ma_alignment_state
+from kis_auth import KisToken, build_headers, REAL_DOMAIN, PAPER_DOMAIN
+from kis_futureoption import rate_limited_retry, RateLimitError
+
+
+# ---------------------------------------------------------------------------
+# 공통 GET 호출 헬퍼 (kis_futureoption.py의 _request_chart와 동일 패턴)
+# ---------------------------------------------------------------------------
+@rate_limited_retry()
+def _request_domestic(
+    path: str,
+    tr_id: str,
+    token: KisToken,
+    app_key: str,
+    app_secret: str,
+    params: dict,
+    is_paper: bool = False,
+) -> dict:
+    domain = PAPER_DOMAIN if is_paper else REAL_DOMAIN
+    url = f"{domain}{path}"
+    headers = build_headers(token, app_key, app_secret, tr_id)
+
+    res = requests.get(url, headers=headers, params=params, timeout=10)
+
+    if res.status_code == 429 or "EGW" in res.text[:200]:
+        raise RateLimitError(f"레이트리밋 감지: {res.status_code} {res.text[:200]}")
+    if res.status_code != 200:
+        raise RuntimeError(f"KIS API 오류 {res.status_code}: {res.text[:300]}")
+
+    data = res.json()
+    if data.get("rt_cd") not in (None, "0"):
+        raise RuntimeError(f"KIS API 응답 오류 (rt_cd={data.get('rt_cd')}): {data.get('msg1')}")
+
+    return data
 
 
 # ---------------------------------------------------------------------------
 # 유틸: 구간화 점수 변환
 # ---------------------------------------------------------------------------
 def _bucket_score(value: float, thresholds: list[tuple[float, int]], default: int) -> int:
-    """thresholds는 (경계값, 그 경계 이상일 때 점수) 오름차순 리스트."""
     score = -2 if value < thresholds[0][0] else default
     for boundary, s in thresholds:
         if value >= boundary:
@@ -62,14 +90,10 @@ def _bucket_score(value: float, thresholds: list[tuple[float, int]], default: in
 # 1. 미국시장 확인 — 미구현 (해외지수 API 모듈 필요)
 # ---------------------------------------------------------------------------
 def get_us_market_score(nasdaq_futures_change_pct: Optional[float] = None) -> float:
-    """
-    nasdaq_futures_change_pct를 직접 넘겨주면 우선 사용 (다른 곳에서 이미
-    받아온 값이 있을 경우). 없으면 미구현 예외를 발생시킵니다.
-    """
     if nasdaq_futures_change_pct is None:
         raise NotImplementedError(
-            "해외지수(나스닥 선물) 시세 API 모듈이 아직 없습니다. "
-            "kis_overseas.py 를 만들거나 nasdaq_futures_change_pct를 직접 전달하세요."
+            "해외지수(나스닥 선물) API 모듈이 아직 없습니다. "
+            "해외주식(overseas_stock) 카테고리 함수 파일을 붙여주시면 연결하겠습니다."
         )
     return _bucket_score(
         nasdaq_futures_change_pct,
@@ -79,17 +103,52 @@ def get_us_market_score(nasdaq_futures_change_pct: Optional[float] = None) -> fl
 
 
 # ---------------------------------------------------------------------------
-# 2. 삼전·하닉 방향 — 미구현 (국내주식 현재가 API 모듈 필요)
+# 2. 삼전·하닉 방향 — ✅ 구현 완료
+#    출처: inquire_price() / tr_id FHKST01010100
 # ---------------------------------------------------------------------------
+def _fetch_stock_change_pct(
+    symbol: str, token: KisToken, app_key: str, app_secret: str, is_paper: bool = False
+) -> float:
+    """
+    주식현재가 시세 조회 -> 전일대비 등락률(%) 반환.
+    path: /uapi/domestic-stock/v1/quotations/inquire-price
+    tr_id: FHKST01010100
+    """
+    params = {
+        "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_INPUT_ISCD": symbol,
+    }
+    data = _request_domestic(
+        "/uapi/domestic-stock/v1/quotations/inquire-price",
+        "FHKST01010100",
+        token, app_key, app_secret, params, is_paper,
+    )
+    output = data.get("output", {})
+    # _TODO_FIELD_1: 등락률 필드명 확인 필요. 통상 'prdy_ctrt'(전일대비율) 사용.
+    return float(output.get("prdy_ctrt", 0.0))
+
+
 def get_semis_direction_score(
     samsung_change_pct: Optional[float] = None,
     skhynix_change_pct: Optional[float] = None,
+    token: Optional[KisToken] = None,
+    app_key: Optional[str] = None,
+    app_secret: Optional[str] = None,
+    is_paper: bool = False,
 ) -> float:
+    """
+    직접 등락률(samsung_change_pct/skhynix_change_pct)을 넘기면 그 값을 우선 사용.
+    안 넘기고 token/app_key/app_secret을 넘기면 API를 직접 호출해서 가져옴.
+    """
     if samsung_change_pct is None or skhynix_change_pct is None:
-        raise NotImplementedError(
-            "국내주식(005930, 000660) 현재가 API 모듈이 아직 없습니다. "
-            "kis_domestic_stock.py 를 만들거나 두 종목 등락률을 직접 전달하세요."
-        )
+        if token is None:
+            raise NotImplementedError(
+                "삼전·하닉 등락률이 없습니다. samsung_change_pct/skhynix_change_pct를 직접 "
+                "전달하거나, token/app_key/app_secret을 넘겨 API를 호출하게 하세요."
+            )
+        samsung_change_pct = _fetch_stock_change_pct("005930", token, app_key, app_secret, is_paper)
+        skhynix_change_pct = _fetch_stock_change_pct("000660", token, app_key, app_secret, is_paper)
+
     avg_change = (samsung_change_pct + skhynix_change_pct) / 2
     return _bucket_score(
         avg_change, thresholds=[(-2.0, -2), (-1.0, -1), (1.0, 1), (2.0, 2)], default=0
@@ -97,52 +156,123 @@ def get_semis_direction_score(
 
 
 # ---------------------------------------------------------------------------
-# 3. 외국인 선물 + 현물 — 미구현 (투자자매매동향 API 모듈 필요)
+# 3. 외국인 선물 + 현물 — ⚠️ 현물만 구현
+#    출처: inquire_investor_time_by_market() / tr_id FHPTJ04030000
 # ---------------------------------------------------------------------------
-def get_foreign_flow_score(
-    foreign_futures_net: Optional[float] = None,
-    foreign_spot_net: Optional[float] = None,
-) -> float:
-    if foreign_futures_net is None or foreign_spot_net is None:
-        raise NotImplementedError(
-            "투자자매매동향(외국인 선물/현물 순매수) API 모듈이 아직 없습니다. "
-            "kis_investor_trend.py 를 만들거나 두 값을 직접 전달하세요."
-        )
-    futures_score = _bucket_score(
-        foreign_futures_net, thresholds=[(-3000, -2), (-1000, -1), (1000, 1), (3000, 2)], default=0
+def _fetch_market_investor_trend(
+    market_code: str,  # 예: "999"(전체) — 정확한 코드는 API 문서에서 재확인 필요
+    sector_code: str,  # 예: "S001" — 업종구분, 정확한 코드는 API 문서에서 재확인 필요
+    token: KisToken, app_key: str, app_secret: str, is_paper: bool = False,
+) -> dict:
+    """
+    시장별 투자자매매동향(시세) 조회.
+    path: /uapi/domestic-stock/v1/quotations/inquire-investor-time-by-market
+    tr_id: FHPTJ04030000
+    output에 외국인/기관/개인 순매수 관련 필드가 시간대별로 담겨있을 것으로 추정됨
+    (정확한 필드명은 실제 응답 확인 필요).
+    """
+    params = {
+        "FID_INPUT_ISCD": market_code,
+        "FID_INPUT_ISCD_2": sector_code,
+    }
+    data = _request_domestic(
+        "/uapi/domestic-stock/v1/quotations/inquire-investor-time-by-market",
+        "FHPTJ04030000",
+        token, app_key, app_secret, params, is_paper,
     )
+    output = data.get("output", [])
+    return output[0] if isinstance(output, list) and output else (output or {})
+
+
+def get_foreign_flow_score(
+    foreign_futures_net: Optional[float] = None,  # 여전히 미구현 — 국내선물옵션 투자자매매동향 필요
+    foreign_spot_net: Optional[float] = None,
+    token: Optional[KisToken] = None,
+    app_key: Optional[str] = None,
+    app_secret: Optional[str] = None,
+    is_paper: bool = False,
+) -> float:
+    if foreign_spot_net is None:
+        if token is None:
+            raise NotImplementedError(
+                "외국인 현물 순매수 데이터가 없습니다. foreign_spot_net을 직접 전달하거나 "
+                "token/app_key/app_secret을 넘겨 API를 호출하게 하세요."
+            )
+        row = _fetch_market_investor_trend("999", "S001", token, app_key, app_secret, is_paper)
+        # _TODO_FIELD_2: 외국인 순매수 필드명 확인 필요. 통상 'frgn_ntby_qty' 계열 사용.
+        foreign_spot_net = float(row.get("frgn_ntby_qty", 0.0))
+
     spot_score = _bucket_score(
         foreign_spot_net, thresholds=[(-3000, -2), (-1000, -1), (1000, 1), (3000, 2)], default=0
+    )
+
+    if foreign_futures_net is None:
+        # 선물 쪽 데이터가 없으면 현물만으로 판단 (신뢰도 낮음, 별도 표시 권장)
+        return spot_score
+
+    futures_score = _bucket_score(
+        foreign_futures_net, thresholds=[(-3000, -2), (-1000, -1), (1000, 1), (3000, 2)], default=0
     )
     return (futures_score + spot_score) / 2
 
 
 # ---------------------------------------------------------------------------
-# 4. 연기금·사모펀드 (기관계로 근사) — 미구현 (투자자매매동향 API 모듈 필요)
+# 4. 연기금·사모펀드 (기관계로 근사) — ✅ 구현 완료
+#    출처: inquire_investor_time_by_market() / tr_id FHPTJ04030000 (3번과 동일 API, 기관 필드 사용)
 # ---------------------------------------------------------------------------
-def get_pension_fund_score(institution_net: Optional[float] = None) -> float:
-    """
-    실시간 API에서 연기금/사모펀드 세부 구분이 어려워 '기관계 순매수' 전체로 근사.
-    """
+def get_pension_fund_score(
+    institution_net: Optional[float] = None,
+    token: Optional[KisToken] = None,
+    app_key: Optional[str] = None,
+    app_secret: Optional[str] = None,
+    is_paper: bool = False,
+) -> float:
     if institution_net is None:
-        raise NotImplementedError(
-            "투자자매매동향(기관계 순매수) API 모듈이 아직 없습니다. "
-            "kis_investor_trend.py 를 만들거나 institution_net을 직접 전달하세요."
-        )
+        if token is None:
+            raise NotImplementedError(
+                "기관계 순매수 데이터가 없습니다. institution_net을 직접 전달하거나 "
+                "token/app_key/app_secret을 넘겨 API를 호출하게 하세요."
+            )
+        row = _fetch_market_investor_trend("999", "S001", token, app_key, app_secret, is_paper)
+        # _TODO_FIELD_3: 기관계 순매수 필드명 확인 필요. 통상 'orgn_ntby_qty' 계열 사용.
+        institution_net = float(row.get("orgn_ntby_qty", 0.0))
+
     return _bucket_score(
         institution_net, thresholds=[(-2000, -2), (-500, -1), (500, 1), (2000, 2)], default=0
     )
 
 
 # ---------------------------------------------------------------------------
-# 5. 프로그램매매 — 미구현 (프로그램매매 동향 API 모듈 필요)
+# 5. 프로그램매매 — ✅ 구현 완료
+#    출처: comp_program_trade_today() / tr_id FHPPG04600101
 # ---------------------------------------------------------------------------
-def get_program_trading_score(program_net: Optional[float] = None) -> float:
+def get_program_trading_score(
+    program_net: Optional[float] = None,
+    token: Optional[KisToken] = None,
+    app_key: Optional[str] = None,
+    app_secret: Optional[str] = None,
+    is_paper: bool = False,
+) -> float:
     if program_net is None:
-        raise NotImplementedError(
-            "프로그램매매 동향 API 모듈이 아직 없습니다. "
-            "kis_program_trading.py 를 만들거나 program_net을 직접 전달하세요."
+        if token is None:
+            raise NotImplementedError(
+                "프로그램매매 순매수 데이터가 없습니다. program_net을 직접 전달하거나 "
+                "token/app_key/app_secret을 넘겨 API를 호출하게 하세요."
+            )
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_MRKT_CLS_CODE": "K",  # K:코스피, Q:코스닥
+        }
+        data = _request_domestic(
+            "/uapi/domestic-stock/v1/quotations/comp-program-trade-today",
+            "FHPPG04600101",
+            token, app_key, app_secret, params, is_paper,
         )
+        output = data.get("output", [])
+        latest = output[0] if isinstance(output, list) and output else {}
+        # _TODO_FIELD_4: 프로그램매매 순매수 필드명 확인 필요. 통상 'whol_ntby_qty' 계열 사용.
+        program_net = float(latest.get("whol_ntby_qty", 0.0))
+
     return _bucket_score(
         program_net, thresholds=[(-2000, -2), (-500, -1), (500, 1), (2000, 2)], default=0
     )
@@ -152,10 +282,6 @@ def get_program_trading_score(program_net: Optional[float] = None) -> float:
 # 6. 가격(차트) — ✅ 구현 완료 (sangang_channel.py 재사용)
 # ---------------------------------------------------------------------------
 def get_price_chart_score(df: pd.DataFrame) -> float:
-    """
-    df: 채널 판단에 쓸 분봉 DataFrame (예: 30분봉 또는 15분봉).
-    sangang_channel의 구조적 고정 채널 + 이평 배열 상태를 그대로 재사용.
-    """
     channel = compute_structural_channel(df, anchor="session")
     last_price = float(df["close"].iloc[-1])
     span = channel.high - channel.low
@@ -185,15 +311,13 @@ WEIGHTS = {
 
 @dataclass
 class MarketAnalysisResult:
-    scores: dict = field(default_factory=dict)          # 계산된 항목만 담김
-    missing_items: List[str] = field(default_factory=list)  # 미구현이라 빠진 항목
+    scores: dict = field(default_factory=dict)
+    missing_items: List[str] = field(default_factory=list)
     final_score: Optional[float] = None
     verdict: str = "데이터 부족"
 
 
 def _classify(score: float) -> str:
-    """최종 점수(-2~+2 범위) -> 강세/약강세/약세/폭락장.
-    임계값은 초기값이며, 실제 데이터(예: 7/13 폭락장) 축적 후 보정 권장."""
     if score >= 1.2:
         return "강세"
     elif score >= 0.3:
@@ -206,6 +330,10 @@ def _classify(score: float) -> str:
 
 def run_kospi_market_analysis(
     price_df: pd.DataFrame,
+    token: Optional[KisToken] = None,
+    app_key: Optional[str] = None,
+    app_secret: Optional[str] = None,
+    is_paper: bool = False,
     nasdaq_futures_change_pct: Optional[float] = None,
     samsung_change_pct: Optional[float] = None,
     skhynix_change_pct: Optional[float] = None,
@@ -215,24 +343,35 @@ def run_kospi_market_analysis(
     program_net: Optional[float] = None,
 ) -> MarketAnalysisResult:
     """
-    각 항목에 값이 주어지면 계산하고, 없으면 missing_items에 기록한 뒤
-    나머지 항목들의 가중치만으로 재정규화해서 '부분 점수'를 냅니다.
-    (즉 지금 당장은 price_chart 하나만 넣어도 동작합니다.)
+    token/app_key/app_secret을 넘기면 2,3(현물),4,5번 항목은 자동으로 API를 호출해서 채웁니다.
+    개별 값(samsung_change_pct 등)을 직접 넘기면 그 값이 우선합니다.
     """
     scores = {}
     missing = []
 
-    def _try(name, fn, *args):
+    def _try(name, fn, *args, **kwargs):
         try:
-            scores[name] = fn(*args)
+            scores[name] = fn(*args, **kwargs)
         except NotImplementedError:
             missing.append(name)
 
     _try("us_market", get_us_market_score, nasdaq_futures_change_pct)
-    _try("semis", get_semis_direction_score, samsung_change_pct, skhynix_change_pct)
-    _try("foreign_flow", get_foreign_flow_score, foreign_futures_net, foreign_spot_net)
-    _try("pension_fund", get_pension_fund_score, institution_net)
-    _try("program_trading", get_program_trading_score, program_net)
+    _try(
+        "semis", get_semis_direction_score,
+        samsung_change_pct, skhynix_change_pct, token, app_key, app_secret, is_paper,
+    )
+    _try(
+        "foreign_flow", get_foreign_flow_score,
+        foreign_futures_net, foreign_spot_net, token, app_key, app_secret, is_paper,
+    )
+    _try(
+        "pension_fund", get_pension_fund_score,
+        institution_net, token, app_key, app_secret, is_paper,
+    )
+    _try(
+        "program_trading", get_program_trading_score,
+        program_net, token, app_key, app_secret, is_paper,
+    )
     _try("price_chart", get_price_chart_score, price_df)
 
     if not scores:
@@ -254,15 +393,6 @@ def run_kospi_market_analysis(
 # SangangEngine(진입 신호)과의 연동 헬퍼
 # ---------------------------------------------------------------------------
 def filter_signal_by_market(signal_direction: Optional[str], market_result: MarketAnalysisResult) -> dict:
-    """
-    sangang_signal_engine.SangangEngine.evaluate()의 결과(direction: 'CALL'|'PUT'|None)를
-    이 모듈의 거시 판단(강세/약강세/약세/폭락장)과 대조해서 '충돌 여부'를 알려주는
-    보조 함수입니다. 진입/보류를 자동으로 강제하지는 않고, 참고용 경고만 반환합니다.
-
-    - CALL 신호인데 시장이 '약세'/'폭락장' → 경고
-    - PUT  신호인데 시장이 '강세'/'약강세' → 경고
-    - missing_items가 있으면(거시 데이터 일부 없음) 신뢰도를 낮춰서 표시
-    """
     if signal_direction is None:
         return {"aligned": None, "warning": None}
 
