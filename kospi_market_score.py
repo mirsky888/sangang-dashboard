@@ -390,6 +390,9 @@ def run_kospi_market_analysis(
     app_key: Optional[str] = None,
     app_secret: Optional[str] = None,
     is_paper: bool = False,
+    quote_token: Optional[KisToken] = None,
+    quote_app_key: Optional[str] = None,
+    quote_app_secret: Optional[str] = None,
     nasdaq_futures_change_pct: Optional[float] = None,
     samsung_change_pct: Optional[float] = None,
     skhynix_change_pct: Optional[float] = None,
@@ -399,12 +402,24 @@ def run_kospi_market_analysis(
     program_net: Optional[float] = None,
 ) -> MarketAnalysisResult:
     """
-    token/app_key/app_secret을 넘기면 2,3(현물),4,5번 항목은 자동으로 API를 호출해서 채웁니다.
+    token/app_key/app_secret을 넘기면 3(현물),4,5번 항목은 자동으로 API를 호출해서 채웁니다.
+
+    1번(미국시장)/2번(삼전·하닉)은 모의투자 앱키로는 호출이 막히는 TR이라 별도로
+    quote_token/quote_app_key/quote_app_secret(실전투자 전용 앱키)을 받습니다.
+    이 값이 없으면 기존 token/app_key/app_secret으로 폴백하되, 모의투자 앱키라면
+    여전히 EGW02004(도메인 불일치) 에러가 날 수 있습니다.
+    이 실전 전용 키 호출은 항상 실전 도메인(is_paper=False)으로 고정됩니다.
+
     개별 값(samsung_change_pct 등)을 직접 넘기면 그 값이 우선합니다.
     """
     scores = {}
     missing = []
     errors = {}
+
+    # 1,2번(시세 전용)에 쓸 자격증명: 실전 전용 키가 있으면 그걸 쓰고, 없으면 기존 키로 폴백
+    q_token = quote_token if quote_token is not None else token
+    q_app_key = quote_app_key if quote_app_key is not None else app_key
+    q_app_secret = quote_app_secret if quote_app_secret is not None else app_secret
 
     def _try(name, fn, *args, **kwargs):
         try:
@@ -419,11 +434,11 @@ def run_kospi_market_analysis(
 
     _try(
         "us_market", get_us_market_score,
-        nasdaq_futures_change_pct, token, app_key, app_secret, is_paper,
+        nasdaq_futures_change_pct, q_token, q_app_key, q_app_secret, False,  # 시세는 항상 실전 도메인
     )
     _try(
         "semis", get_semis_direction_score,
-        samsung_change_pct, skhynix_change_pct, token, app_key, app_secret, is_paper,
+        samsung_change_pct, skhynix_change_pct, q_token, q_app_key, q_app_secret, False,
     )
     _try(
         "foreign_flow", get_foreign_flow_score,
