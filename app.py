@@ -31,7 +31,7 @@ st.set_page_config(page_title="산강 매매법 v2-9 대시보드", layout="wide
 # ----------------------------------------------------------------------
 @st.cache_resource(show_spinner=False)
 def get_kis_token() -> KisToken:
-    app_key = st.secrets["ET = "zgJPXDmrSO6OltPRNE5kdTgouqDX1w"]
+    app_key = st.secrets["zgJPXDmrSO6OltPRNE5kdTgouqDX1w"]
     app_secret = st.secrets["zgJPXDmrSO6OltPRNE5kdTgouqDX1waPfmkn4e98XK6OcSsx/XUQnrjGqjTPy6sqcO58pgdAw3qbOZK+xg9DF0eS4bh0vPBeU1Qu3SgsueBmGUJ/Ulwq3G95cnqgBgz8vvzj9315TFwYjuwxamLfz6W+ikNdmIe3OkOtg2XDvq+RjZZlBK"]
     is_paper = st.secrets.get("KIS_IS_PAPER", False)
     return issue_token(app_key, app_secret, is_paper=is_paper)
