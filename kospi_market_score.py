@@ -313,6 +313,10 @@ def get_program_trading_score(
         params = {
             "FID_COND_MRKT_DIV_CODE": "J",
             "FID_MRKT_CLS_CODE": "K",  # K:코스피, Q:코스닥
+            "FID_SCTN_CLS_CODE": "",   # 구간 구분 코드 (빈 값이라도 필드 자체는 필수)
+            "FID_INPUT_ISCD": "",      # 입력종목코드 (전체 시장 조회 시 공란)
+            "FID_COND_MRKT_DIV_CODE1": "",  # 시장분류코드
+            "FID_INPUT_HOUR_1": "",    # 입력시간 (공란 = 최신)
         }
         data = _request_domestic(
             "/uapi/domestic-stock/v1/quotations/comp-program-trade-today",
