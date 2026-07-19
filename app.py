@@ -59,7 +59,18 @@ def fetch_ohlcv(symbol: str, interval_min: int, lookback_days: int = 3) -> pd.Da
 # ----------------------------------------------------------------------
 st.sidebar.title("⚙️ 설정")
 
-symbol = st.sidebar.text_input("종목/선물코드", value="KOSPI200F202609")
+symbol = st.sidebar.text_input(
+    "종목/선물코드 (KRX 단축코드)",
+    value="A01609",
+    help=(
+        "KOSPI200 선물 단축코드입니다. 예: A01609 = 2026년 9월물(F 202609), "
+        "A01000 = 연결선물(월물 구분 없이 이어지는 연속 데이터, 장기 조회에 유리). "
+        "HTS 종목검색에서 '연결선물' 또는 원하는 월물을 조회하면 코드가 표시됩니다."
+    ),
+)
+if not symbol:
+    st.sidebar.warning("종목코드를 입력해야 조회가 가능합니다.")
+    st.stop()
 
 tail_ratio_threshold = st.sidebar.slider(
     "꼬리 임계값 (몸통 대비 배수)", min_value=0.3, max_value=3.0, value=1.0, step=0.1
