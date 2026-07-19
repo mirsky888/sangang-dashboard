@@ -11,6 +11,8 @@ sangang_channel.py — 산강채널 계산 모듈
 
 from __future__ import annotations
 
+__version__ = "2.9.2-2026-07-19-extreme-emphasis"
+
 import pandas as pd
 import numpy as np
 from dataclasses import dataclass
