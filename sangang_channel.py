@@ -11,7 +11,7 @@ sangang_channel.py — 산강채널 계산 모듈
 
 from __future__ import annotations
 
-__version__ = "2.9.3-2026-07-19-first-touch-emphasis"
+__version__ = "2.9.4-2026-07-19-ma60-multi-tf-panel"
 
 import pandas as pd
 import numpy as np
@@ -296,6 +296,55 @@ def check_channel_extreme_emphasis(
                 return "🔻 채널상단 매도강조 — 60·120 장기이평 첫 터치 저항 확인됨"
 
     return None
+
+
+def check_ma60_multi_timeframe(
+    df15: pd.DataFrame,
+    df30: pd.DataFrame,
+    df60: pd.DataFrame,
+    tolerance_pct: float = 0.15,
+) -> dict:
+    """
+    15분봉·30분봉·60분봉 각각의 60이평(MA60)을 계산해서, 현재가가
+    각 타임프레임의 60선에 얼마나 근접해 있는지(터치 여부)를 한눈에 보여주는
+    전용 대시보드용 데이터를 만듭니다.
+
+    반환 예:
+    {
+        "15분": {"ma60": 1171.2, "price": 1171.5, "diff_pct": 0.03, "touching": True},
+        "30분": {...},
+        "60분": {...},
+        "confluence_count": 2,   # 동시에 터치 중인 타임프레임 개수
+        "all_touching": False,   # 3개 다 동시에 터치 중인지
+    }
+    """
+    frames = {"15분": df15, "30분": df30, "60분": df60}
+    result = {}
+    touching_count = 0
+
+    for label, df in frames.items():
+        if df is None or df.empty or len(df) < 60:
+            result[label] = {"ma60": None, "price": None, "diff_pct": None, "touching": False}
+            continue
+
+        ma60 = float(df["close"].rolling(60).mean().iloc[-1])
+        price = float(df["close"].iloc[-1])
+        diff_pct = abs(price - ma60) / ma60 * 100 if ma60 else None
+        touching = diff_pct is not None and diff_pct <= tolerance_pct
+
+        if touching:
+            touching_count += 1
+
+        result[label] = {
+            "ma60": ma60,
+            "price": price,
+            "diff_pct": diff_pct,
+            "touching": touching,
+        }
+
+    result["confluence_count"] = touching_count
+    result["all_touching"] = touching_count == len(frames)
+    return result
 
 
 def compute_key_levels(
