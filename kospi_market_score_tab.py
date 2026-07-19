@@ -55,11 +55,19 @@ def render_kospi_market_tab(price_df, token=None, signal_result=None):
     if result.missing_items:
         missing_labels = ", ".join(LABEL_MAP[m] for m in result.missing_items)
         st.warning(
-            f"미구현 항목: {missing_labels}\n\n"
-            f"위 항목들은 해외지수·국내주식·투자자매매동향(선물)·프로그램매매 API 모듈이 "
-            f"추가되면 자동으로 포함됩니다. 현재는 남은 항목만으로 가중치를 재조정한 "
-            f"'부분 점수'입니다."
+            f"미구현/실패 항목: {missing_labels}\n\n"
+            f"현재는 계산 가능한 나머지 항목만으로 가중치를 재조정한 '부분 점수'입니다."
         )
+
+    if result.errors:
+        with st.expander("⚠️ 실제 API 호출 실패 상세 (디버깅용)"):
+            for name, msg in result.errors.items():
+                st.code(f"[{LABEL_MAP.get(name, name)}]\n{msg}")
+            st.caption(
+                "위 에러가 tr_id 오류인지, 계좌 권한(모의/실전 불일치) 문제인지, "
+                "네트워크/레이트리밋 문제인지에 따라 대응이 다릅니다. "
+                "메시지를 붙여주시면 정확한 원인을 같이 확인하겠습니다."
+            )
 
     if result.scores:
         st.markdown("#### 계산된 항목별 점수 (-2 ~ +2)")
