@@ -11,7 +11,7 @@ sangang_channel.py — 산강채널 계산 모듈
 
 from __future__ import annotations
 
-__version__ = "2.9.6-2026-07-19-session-only-touch"
+__version__ = "2.9.7-2026-07-20-prev-day-center"
 
 import pandas as pd
 import numpy as np
@@ -28,6 +28,37 @@ class ChannelInfo:
     q75: float
     anchor_start: pd.Timestamp
     anchor_end: pd.Timestamp
+
+
+def compute_prev_day_center(df: pd.DataFrame) -> tuple[float, float, float]:
+    """
+    '중심가' = (전일 고점 + 전일 저점) / 2
+
+    df의 마지막 캔들이 속한 날짜 바로 이전의 거래일을 '전일'로 판정하여
+    그날의 고점(high 최대값)/저점(low 최소값)을 구하고 중간값을 반환합니다.
+
+    df는 최소 2거래일 이상의 데이터를 포함해야 합니다 (예: 60분봉을 10일치 조회).
+
+    반환: (전일고점: float, 전일저점: float, 중심가: float)
+    """
+    if df.empty:
+        raise ValueError("빈 DataFrame으로는 전일 고점/저점을 계산할 수 없습니다.")
+
+    all_dates = sorted(set(df.index.date))
+    if len(all_dates) < 2:
+        raise ValueError(
+            "전일 데이터가 없습니다 (최소 2거래일 이상의 데이터가 필요합니다). "
+            "lookback_days를 늘려서 다시 조회해 보세요."
+        )
+
+    prev_date = all_dates[-2]  # 가장 최근 날짜 바로 이전 거래일
+    prev_day_df = df[df.index.date == prev_date]
+
+    prev_high = float(prev_day_df["high"].max())
+    prev_low = float(prev_day_df["low"].min())
+    center = (prev_high + prev_low) / 2
+
+    return prev_high, prev_low, center
 
 
 def compute_structural_channel(
