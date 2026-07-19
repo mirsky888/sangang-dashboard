@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 from sangang_signal_engine import SangangEngine
 from sangang_channel import compute_key_levels
 from kis_auth import issue_token, KisToken
-from kis_futureoption import fetch_minute_ohlcv, fetch_ohlcv_chunked
+from kis_futureoption import fetch_latest_minute_ohlcv, fetch_ohlcv_chunked
 
 st.set_page_config(page_title="산강 매매법 v2-9 대시보드", layout="wide")
 
@@ -47,7 +47,7 @@ def fetch_ohlcv(symbol: str, interval_min: int, lookback_days: int = 3) -> pd.Da
     is_paper = st.secrets.get("KIS_IS_PAPER", False)
 
     if lookback_days <= 1:
-        return fetch_minute_ohlcv(symbol, interval_min, token, app_key, app_secret, is_paper)
+        return fetch_latest_minute_ohlcv(symbol, interval_min, token, app_key, app_secret, is_paper)
 
     return fetch_ohlcv_chunked(
         symbol, interval_min, lookback_days, token, app_key, app_secret, is_paper
