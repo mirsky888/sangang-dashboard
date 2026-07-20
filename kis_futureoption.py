@@ -222,6 +222,92 @@ def fetch_latest_minute_ohlcv(
     return fetch_minute_ohlcv(symbol, interval_min, token, app_key, app_secret, is_paper)
 
 
+def fetch_snapshot(
+    symbol: str,
+    token: KisToken,
+    app_key: str,
+    app_secret: str,
+    is_paper: bool = False,
+) -> Optional[dict]:
+    """
+    output1(실시간 스냅샷)에서 현재가/시가/고가/저가/거래량을 추출합니다.
+    output2(분봉 이력)는 지연이 있지만, output1은 실시간으로 확인됨(2026-07-19 검증).
+
+    반환: {"price", "open", "high", "low", "volume", "timestamp"} 또는 실패 시 None
+    """
+    end_datetime = datetime.now()
+    params = {
+        "FID_COND_MRKT_DIV_CODE": "F",
+        "FID_INPUT_ISCD": symbol,
+        "FID_HOUR_CLS_CODE": "3",
+        "FID_PW_DATA_INCU_YN": "Y",
+        "FID_FAKE_TICK_INCU_YN": "N",
+        "FID_INPUT_DATE_1": end_datetime.strftime("%Y%m%d"),
+        "FID_INPUT_HOUR_1": end_datetime.strftime("%H%M%S"),
+    }
+
+    try:
+        data = _request_chart(
+            DEFAULT_MINUTE_PATH, DEFAULT_MINUTE_TR_ID, token, app_key, app_secret, params, is_paper
+        )
+    except Exception:
+        return None
+
+    output1 = data.get("output1") or {}
+    if not output1 or "futs_prpr" not in output1:
+        return None
+
+    def _f(key, default=0.0):
+        v = output1.get(key)
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return default
+
+    return {
+        "price": _f("futs_prpr"),
+        "open": _f("futs_oprc", _f("futs_prpr")),
+        "high": _f("futs_hgpr", _f("futs_prpr")),
+        "low": _f("futs_lwpr", _f("futs_prpr")),
+        "volume": _f("acml_vol"),
+        "timestamp": datetime.now(),
+    }
+
+
+def patch_with_live_price(df: pd.DataFrame, snapshot: dict, freq_min: int) -> pd.DataFrame:
+    """
+    분봉 이력(df)의 지연 여부와 무관하게, 방금 조회한 실시간 스냅샷 가격을
+    '지금 이 순간의 봉'으로 추가/갱신합니다. 이렇게 하면 과거 이력엔 지연이
+    있어도 최신가/현재 위치 판단만큼은 실시간으로 반영됩니다.
+    """
+    if df is None or df.empty or not snapshot:
+        return df
+
+    now = pd.Timestamp(snapshot["timestamp"]).floor(f"{freq_min}min")
+    price = snapshot["price"]
+
+    if now in df.index:
+        row = df.loc[now]
+        df.loc[now, "high"] = max(row["high"], price)
+        df.loc[now, "low"] = min(row["low"], price)
+        df.loc[now, "close"] = price
+    else:
+        new_row = pd.DataFrame(
+            {
+                "open": [price],
+                "high": [price],
+                "low": [price],
+                "close": [price],
+                "volume": [0.0],
+            },
+            index=[now],
+        )
+        df = pd.concat([df, new_row])
+        df = df[~df.index.duplicated(keep="last")].sort_index()
+
+    return df
+
+
 def fetch_minute_ohlcv(
     symbol: str,
     interval_min: int,
