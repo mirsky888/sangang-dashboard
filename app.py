@@ -10,10 +10,6 @@
 레이트리밋 재시도 로직 등)를 그대로 옮겨 붙이시면 완성됩니다.
 지금은 해당 함수들이 더미(dummy) 데이터를 반환하도록 되어 있어
 UI와 산강엔진 연결 구조만 먼저 확인할 수 있습니다.
-
-[2026-07-19 추가] 코스피 마켓스코어 탭 연동:
-    from kospi_market_score_tab import render_kospi_market_tab
-    render_kospi_market_tab(df30, token=token, signal_result=result)
 """
 
 import streamlit as st
@@ -22,10 +18,9 @@ import numpy as np
 from datetime import datetime, timedelta
 
 from sangang_signal_engine import SangangEngine, __version__ as ENGINE_VERSION
-from sangang_channel import compute_key_levels_with_confluence, check_ma60_multi_timeframe, compute_prev_day_center, __version__ as CHANNEL_VERSION
+from sangang_channel import compute_key_levels_with_confluence, check_ma60_multi_timeframe, __version__ as CHANNEL_VERSION
 from kis_auth import issue_token, KisToken
-from kis_futureoption import fetch_latest_minute_ohlcv, fetch_ohlcv_chunked
-from kospi_market_score_tab import render_kospi_market_tab  # [추가] 코스피 마켓스코어
+from kis_futureoption import fetch_latest_minute_ohlcv, fetch_ohlcv_chunked, fetch_snapshot, patch_with_live_price
 
 st.set_page_config(page_title="산강 매매법 v2-9 대시보드", layout="wide")
 
@@ -85,9 +80,9 @@ level_tolerance_pct = st.sidebar.slider(
     "주요자리 근접 허용오차 (%)", min_value=0.05, max_value=1.0, value=0.15, step=0.05
 )
 
-auto_refresh = st.sidebar.checkbox("자동 새로고침 (60초)", value=False)
+auto_refresh = st.sidebar.checkbox("자동 새로고침 (30초)", value=False)
 if auto_refresh:
-    st.sidebar.caption("체크 시 60초마다 자동으로 재조회합니다. (Streamlit Cloud 무료 티어는 리소스 제한에 유의)")
+    st.sidebar.caption("30초마다 자동으로 재조회합니다. (Streamlit Cloud 무료 티어는 리소스 제한에 유의)")
 
 
 # ----------------------------------------------------------------------
@@ -122,6 +117,22 @@ with st.spinner("분봉 데이터 조회 중..."):
         )
         st.stop()
 
+# ----------------------------------------------------------------------
+# 실시간 패치: 분봉 이력(output2)에 지연이 있어도, 스냅샷(output1)의
+# 실시간 현재가를 각 타임프레임의 '지금 이 순간 봉'에 반영합니다.
+# ----------------------------------------------------------------------
+snapshot = fetch_snapshot(
+    symbol, token, st.secrets["KIS_APP_KEY"], st.secrets["KIS_APP_SECRET"],
+    st.secrets.get("KIS_IS_PAPER", False),
+)
+live_patched = False
+if snapshot:
+    df60 = patch_with_live_price(df60, snapshot, 60)
+    df30 = patch_with_live_price(df30, snapshot, 30)
+    df15 = patch_with_live_price(df15, snapshot, 15)
+    df3 = patch_with_live_price(df3, snapshot, 3)
+    live_patched = True
+
 if df3.empty:
     st.warning("조회된 데이터가 없습니다. 종목코드/장운영시간을 확인해 주세요.")
     st.stop()
@@ -138,30 +149,7 @@ engine = SangangEngine(
 )
 engine.set_key_levels_with_confluence(key_levels, confluence_map)
 
-try:
-    prev_high, prev_low, channel_center = compute_prev_day_center(df60)
-    center_is_fallback = False
-except ValueError as e:
-    unique_dates = sorted(set(df60.index.date)) if not df60.empty else []
-    st.warning(
-        f"⚠️ 전일 고점/저점 계산 실패: {e}\n\n"
-        f"→ 현재 조회된 60분봉의 거래일 목록: **{unique_dates}**\n\n"
-        + (
-            "위 목록이 1개뿐이라 진짜 문제입니다 — lookback_days를 늘려도 소용없고, "
-            "KIS API의 과거 날짜 분봉 조회(fetch_ohlcv_chunked)가 실제로 여러 날짜를 "
-            "반환하지 못하고 있는 것으로 보입니다. 점검이 필요합니다."
-            if len(unique_dates) <= 1
-            else "날짜는 여러 개 있는데 판정에 실패했다면 날짜 파싱/정렬 문제일 수 있습니다."
-        )
-        + "\n\n일단 오늘 세션(당일) 고점/저점의 중간값으로 임시 대체하여 계속 진행합니다."
-    )
-    # 폴백: 전일 데이터를 못 구하면 당일 세션 고점/저점 중간값으로 임시 대체
-    from sangang_channel import compute_structural_channel as _csc
-    _fallback_channel = _csc(df60, anchor="session")
-    prev_high, prev_low = _fallback_channel.high, _fallback_channel.low
-    channel_center = _fallback_channel.center
-    center_is_fallback = True
-
+channel_center = float(df3["close"].tail(60).mean())
 result = engine.evaluate(df60, df30, df15, df3, channel_center=channel_center)
 
 
@@ -169,29 +157,28 @@ result = engine.evaluate(df60, df30, df15, df3, channel_center=channel_center)
 # 메인 화면
 # ----------------------------------------------------------------------
 st.title(f"📊 산강 매매법 v2-9 — {symbol}")
+live_badge = "🟢 실시간 반영됨" if live_patched else "🔴 실시간 패치 실패(스냅샷 조회 안 됨)"
 st.caption(
     f"조회 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  "
     f"현재가: {df3['close'].iloc[-1]:.2f}  |  "
-    f"⏱️ 실제 데이터 최종 시각: **{df3.index[-1]}**"
+    f"⏱️ 최신 봉 시각: **{df3.index[-1]}**  |  {live_badge}"
 )
-if (datetime.now() - df3.index[-1].to_pydatetime()).total_seconds() > 86400:
+if not live_patched:
     st.warning(
-        f"⚠️ 데이터의 최종 시각({df3.index[-1]})이 현재 시각보다 24시간 이상 오래됐습니다. "
-        "주말/휴장일이거나, 이 API 특성상 분봉 이력에 며칠 지연이 있을 수 있습니다 "
-        "(2026-07-19 실측: 실시간 스냅샷과 분봉 이력 사이에 지연 확인됨 — 버그 아닐 가능성 높음). "
-        "정확한 지연 사양은 KIS Developers 포털에서 확인 권장합니다."
+        "⚠️ 실시간 스냅샷 조회에 실패해서 분봉 이력 그대로 표시 중입니다. "
+        "이 경우 가격이 며칠 지연될 수 있습니다 (분봉조회 API 자체의 지연 특성 — 이전 진단 참고). "
+        "'원본 분봉 데이터' 섹션에서 원본 응답을 확인해보세요."
+    )
+elif (datetime.now() - df3.index[-1].to_pydatetime()).total_seconds() > 300:
+    st.info(
+        f"ℹ️ 최신 봉이 5분 이상 오래됐습니다({df3.index[-1]}). 장 시간이 아니거나 "
+        "휴장일일 수 있습니다. (현재가 자체는 실시간 스냅샷이 반영된 값입니다.)"
     )
 
 col1, col2, col3 = st.columns(3)
 col1.metric("신뢰도 점수", f"{result.score} / 100")
 col2.metric("등급", result.grade)
 col3.metric("방향", result.direction or "관망")
-
-st.caption(
-    f"📍 전일 고점: **{prev_high:.2f}**  |  전일 저점: **{prev_low:.2f}**  |  "
-    f"중심가(=(전일고점+전일저점)/2): **{channel_center:.2f}**"
-    + (" ⚠️ (전일 데이터 부족으로 당일 세션 기준 임시 대체값)" if center_is_fallback else "")
-)
 
 reliability_label = getattr(result, "reliability_label", "")
 confluence_count = getattr(result, "confluence_count", 1)
@@ -277,11 +264,6 @@ with st.expander("원본 분봉 데이터 (디버깅용)"):
             "매핑을 정확히 고쳐드리겠습니다."
         )
 
-# ----------------------------------------------------------------------
-# [추가] 코스피 시장 분석 — 6요소 종합 스코어링 (2026-07-19)
-# ----------------------------------------------------------------------
-render_kospi_market_tab(df30, token=token, signal_result=result)
-
 st.success(
     "✅ KIS API 실전 연동 확인 완료 (2026-07-19). "
     "PATH/tr_id/필수 파라미터 모두 검증된 값으로 동작 중입니다."
@@ -291,3 +273,11 @@ st.caption(
     "엄격하게 걸러지고 있는 것입니다. 신호가 너무 드물게 뜬다면 사이드바의 "
     "'꼬리 임계값'을 낮춰보거나(예: 1.0 → 0.7), '주요자리 근접 허용오차'를 넓혀보세요(예: 0.15 → 0.25)."
 )
+
+# ----------------------------------------------------------------------
+# 자동 새로고침 (실제 동작): 체크 시 30초마다 이 스크립트를 재실행합니다.
+# ----------------------------------------------------------------------
+if auto_refresh:
+    import time as _time
+    _time.sleep(30)
+    st.rerun()
